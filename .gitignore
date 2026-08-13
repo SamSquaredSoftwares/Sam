@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Action Server
+.datadir/
+devdata/
+output/
+.devrun/
+*.zip
