@@ -38,7 +38,7 @@ fi
 # 2. Stage the actions without package.yaml so the server skips the RCC
 #    bootstrap and runs the actions in this venv (unmanaged mode).
 mkdir -p "$STAGE"
-cp "$ROOT/actions/actions.py" "$STAGE/actions.py"
+cp "$ROOT/actions/"*.py "$STAGE/"
 
 # 3. Start the server.
 echo "Starting Sema4.ai Action Server on http://localhost:$PORT"
