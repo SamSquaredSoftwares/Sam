@@ -74,7 +74,20 @@ The Snowflake actions read their connection settings from Sema4.ai secrets
 | `SNOWFLAKE_SCHEMA`                 | no       |                                              |
 | `SNOWFLAKE_ROLE`                   | no       |                                              |
 
-Example:
+The easiest way to configure credentials locally is a `.env` file, which
+`scripts/run_local.sh` loads automatically:
+
+```bash
+cp .env.example .env
+# edit .env and fill in SNOWFLAKE_ACCOUNT / SNOWFLAKE_USER / SNOWFLAKE_PASSWORD
+# (and ANTHROPIC_API_KEY for ask_claude)
+./scripts/run_local.sh
+```
+
+`.env` is gitignored — never commit real credentials. In production, provide
+the same values as Sema4.ai secrets or environment variables on the server.
+
+Example using plain environment variables instead:
 
 ```bash
 export SNOWFLAKE_ACCOUNT=myorg-myaccount
