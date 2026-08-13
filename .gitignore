@@ -1,0 +1,14 @@
+# Deny by default. This repo is rooted at the Windows user profile, so any
+# unlisted file - credentials, tokens, kube/docker/cloud config - stays out
+# of git. Add an explicit "!" line to track something new.
+*
+
+# Explicitly tracked:
+!.gitignore
+!README.md
+!requirements.txt
+
+# Previously-tracked ADB public key (harmless, kept for continuity):
+!.android/
+.android/*
+!.android/adbkey.pub
