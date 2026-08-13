@@ -5,6 +5,7 @@
 
 # Explicitly tracked:
 !.gitignore
+!.gitattributes
 !README.md
 !requirements.txt
 
@@ -12,3 +13,24 @@
 !.android/
 .android/*
 !.android/adbkey.pub
+
+# Action Package source. Un-exclude the directory first - git will not descend
+# into an excluded directory, so the "!dir/" line has to precede "!dir/**".
+!actions/
+!actions/**
+!scripts/
+!scripts/**
+
+# ...but never the generated noise inside them. These come last so they win:
+# the last matching pattern decides.
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/venv/
+
+# Action Server working directories:
+**/.datadir/
+**/devdata/
+**/output/
+**/.devrun/
+**/*.zip
