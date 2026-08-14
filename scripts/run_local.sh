@@ -16,6 +16,15 @@ PORT="${1:-8080}"
 VENV="$ROOT/.venv"
 STAGE="$ROOT/.devrun/sam-actions"
 
+# 0. Load credentials from .env if present (see .env.example).
+if [ -f "$ROOT/.env" ]; then
+    echo "Loading environment from $ROOT/.env"
+    set -a
+    # shellcheck disable=SC1091
+    . "$ROOT/.env"
+    set +a
+fi
+
 # 1. Ensure the virtualenv exists and has the dependencies.
 if [ ! -x "$VENV/bin/python" ]; then
     echo "Creating virtualenv at $VENV ..."
@@ -38,7 +47,7 @@ fi
 # 2. Stage the actions without package.yaml so the server skips the RCC
 #    bootstrap and runs the actions in this venv (unmanaged mode).
 mkdir -p "$STAGE"
-cp "$ROOT/actions/actions.py" "$STAGE/actions.py"
+cp "$ROOT/actions/"*.py "$STAGE/"
 
 # 3. Start the server.
 echo "Starting Sema4.ai Action Server on http://localhost:$PORT"

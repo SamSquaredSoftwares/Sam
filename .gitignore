@@ -8,6 +8,7 @@
 !.gitattributes
 !README.md
 !requirements.txt
+!.env.example
 
 # Previously-tracked ADB public key (harmless, kept for continuity):
 !.android/
@@ -27,6 +28,10 @@
 **/*.py[cod]
 **/.venv/
 **/venv/
+
+# Secrets stay out even inside allowlisted directories (.env.example above is
+# the only exception):
+**/.env
 
 # Action Server working directories:
 **/.datadir/

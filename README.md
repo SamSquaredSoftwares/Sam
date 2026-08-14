@@ -15,10 +15,12 @@ requirements.txt    Dependencies for the local virtualenv
 
 ## Actions
 
-| Action         | Description                                                              |
-| -------------- | ------------------------------------------------------------------------ |
-| `health_check` | No-credential smoke test; reports the Python/runtime the actions run on. |
-| `ask_claude`   | Sends a prompt to Claude (Anthropic API) and returns the text reply.     |
+| Action                      | Description                                                              |
+| --------------------------- | ------------------------------------------------------------------------ |
+| `health_check`              | No-credential smoke test; reports the Python/runtime the actions run on. |
+| `ask_claude`                | Sends a prompt to Claude (Anthropic API) and returns the text reply.     |
+| `test_snowflake_connection` | Connects to Snowflake and reports version/session context.               |
+| `query_snowflake`           | Runs a read-only SQL statement and returns rows as JSON (max 1000 rows). |
 
 `ask_claude` takes its API key as a Sema4.ai `Secret` (passed out of band by the
 Action Server, e.g. via the `x-action-context` header) and falls back to the
@@ -54,6 +56,56 @@ curl -X POST http://localhost:8080/api/actions/sam-actions/ask-claude/run \
 
 Set `ANTHROPIC_API_KEY` in the server's environment (or pass the `api_key`
 secret through the action context) before calling `ask_claude`.
+
+## Snowflake configuration
+
+The Snowflake actions read their connection settings from Sema4.ai secrets
+(passed out of band by the Action Server) with environment-variable fallbacks:
+
+| Variable                           | Required | Notes                                        |
+| ---------------------------------- | -------- | -------------------------------------------- |
+| `SNOWFLAKE_ACCOUNT`                | yes      | Account identifier, e.g. `myorg-myaccount`   |
+| `SNOWFLAKE_USER`                   | yes      |                                              |
+| `SNOWFLAKE_PASSWORD`               | yes*     | *Or use key-pair auth below                  |
+| `SNOWFLAKE_PRIVATE_KEY_PATH`       | no       | Path to a PKCS#8 private key (key-pair auth) |
+| `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` | no       | Passphrase for an encrypted private key      |
+| `SNOWFLAKE_WAREHOUSE`              | no       |                                              |
+| `SNOWFLAKE_DATABASE`               | no       |                                              |
+| `SNOWFLAKE_SCHEMA`                 | no       |                                              |
+| `SNOWFLAKE_ROLE`                   | no       |                                              |
+
+The easiest way to configure credentials locally is a `.env` file, which
+`scripts/run_local.sh` loads automatically:
+
+```bash
+cp .env.example .env
+# edit .env and fill in SNOWFLAKE_ACCOUNT / SNOWFLAKE_USER / SNOWFLAKE_PASSWORD
+# (and ANTHROPIC_API_KEY for ask_claude)
+./scripts/run_local.sh
+```
+
+`.env` is gitignored — never commit real credentials. In production, provide
+the same values as Sema4.ai secrets or environment variables on the server.
+
+Example using plain environment variables instead:
+
+```bash
+export SNOWFLAKE_ACCOUNT=myorg-myaccount
+export SNOWFLAKE_USER=sam
+export SNOWFLAKE_PASSWORD=...
+export SNOWFLAKE_WAREHOUSE=COMPUTE_WH
+./scripts/run_local.sh
+
+curl -X POST http://localhost:8080/api/actions/sam-actions/test-snowflake-connection/run \
+  -H 'Content-Type: application/json' -d '{}'
+
+curl -X POST http://localhost:8080/api/actions/sam-actions/query-snowflake/run \
+  -H 'Content-Type: application/json' \
+  -d '{"sql": "select current_timestamp()", "max_rows": 10}'
+```
+
+`query_snowflake` only accepts a single read-only statement
+(SELECT/SHOW/DESCRIBE/WITH/EXPLAIN) and caps results at 1000 rows.
 
 ## Managed environments (production)
 
