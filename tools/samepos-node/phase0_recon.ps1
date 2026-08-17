@@ -46,6 +46,13 @@ function New-Report {
 $report = New-Report
 $report.errors = New-Object System.Collections.ArrayList
 
+# Verdict keys are seeded so they are ALWAYS present in the report, even if the
+# probe that computes one fails. A consumer branching on these should never have
+# to distinguish "absent" from "unknown".
+$report.install_location_advice = 'unknown - the drive probe did not complete'
+$report.digitot_verdict         = 'unknown - the SQL probe did not complete'
+$report.payload_verdict         = 'unknown - the payload search did not complete'
+
 function Add-Problem([string] $Area, [string] $Message) {
     [void] $report.errors.Add([ordered] @{ area = $Area; message = $Message })
 }
@@ -343,6 +350,96 @@ print(json.dumps({"version": sys.version.split()[0], "modules": mods}))
     }
 } catch {
     Add-Problem 'bundled_python' $_.Exception.Message
+}
+
+# ------------------------------------------------- staged installer payload ---
+# The payload and update bundle are commonly already staged on the venue box.
+# Find them here rather than in a second round trip, and report *completeness* --
+# a partial payload is the failure that wastes the most time later.
+#
+# Bounded on purpose: a depth-limited search over a few likely roots, skipping
+# the Windows directory. This runs on a trading box, so it must not turn into a
+# full-disk crawl.
+try {
+    $searchRoots = New-Object System.Collections.ArrayList
+    foreach ($drive in @($report.drives | ForEach-Object { $_.drive })) {
+        [void] $searchRoots.Add("$drive\")
+    }
+    foreach ($sub in @('Users\Public\Desktop', 'Users\Public\Downloads', 'ProgramData')) {
+        $candidate = Join-Path $env:SystemDrive $sub
+        if (Test-Path $candidate) { [void] $searchRoots.Add($candidate) }
+    }
+    # Per-user Desktop/Downloads, where an operator most often drops a bundle.
+    try {
+        foreach ($profileDir in @(Get-ChildItem (Join-Path $env:SystemDrive 'Users') -Directory -ErrorAction Stop)) {
+            foreach ($sub in @('Desktop', 'Downloads')) {
+                $candidate = Join-Path $profileDir.FullName $sub
+                if (Test-Path $candidate) { [void] $searchRoots.Add($candidate) }
+            }
+        }
+    } catch { }
+
+    $windowsDir = $env:WINDIR
+    $markers = @('configure-node.ps1', 'deploy-update.ps1', 'run-server.ps1')
+    $found = New-Object System.Collections.ArrayList
+
+    foreach ($root in ($searchRoots | Select-Object -Unique)) {
+        foreach ($marker in $markers) {
+            try {
+                $hits = Get-ChildItem -LiteralPath $root -Filter $marker -File -Recurse -Depth 3 `
+                            -Force -ErrorAction SilentlyContinue |
+                        Where-Object { $_.FullName -notlike "$windowsDir*" } |
+                        Select-Object -First 5
+                foreach ($hit in $hits) {
+                    [void] $found.Add([ordered] @{
+                        marker    = $marker
+                        directory = $hit.DirectoryName
+                        modified  = $hit.LastWriteTime.ToString('o')
+                        size      = $hit.Length
+                    })
+                }
+            } catch { }
+        }
+    }
+
+    # Group by containing directory and score each as a payload or update bundle.
+    $payloadDirs = @($found | ForEach-Object { $_.directory } | Select-Object -Unique)
+    $report.staged_payloads = @(
+        foreach ($dir in $payloadDirs) {
+            $present = @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue |
+                            Select-Object -ExpandProperty Name)
+            # A complete install payload carries all of these; an update bundle
+            # carries deploy-update.ps1 plus app/ and sync/ but no postgres/.
+            $expectedPayload = @('app', 'db', 'postgres', 'python', 'sync', 'configure-node.ps1')
+            $missingPayload  = @($expectedPayload | Where-Object { $present -notcontains $_ })
+            [ordered] @{
+                directory            = $dir
+                entries              = $present
+                has_configure_node   = ($present -contains 'configure-node.ps1')
+                has_deploy_update    = ($present -contains 'deploy-update.ps1')
+                missing_for_payload  = $missingPayload
+                looks_like           = if (-not $missingPayload.Count) {
+                    'complete install payload'
+                } elseif ($present -contains 'deploy-update.ps1') {
+                    'update bundle'
+                } else {
+                    "INCOMPLETE - missing: $($missingPayload -join ', ')"
+                }
+            }
+        }
+    )
+    $report.payload_verdict = if (-not $report.staged_payloads.Count) {
+        'no staged payload found in the searched roots - confirm the path with the operator'
+    } else {
+        $complete = @($report.staged_payloads | Where-Object { $_.looks_like -eq 'complete install payload' })
+        if ($complete.Count) {
+            "complete payload at: $($complete[0].directory)"
+        } else {
+            'candidates found but none complete - review missing_for_payload before transferring'
+        }
+    }
+} catch {
+    Add-Problem 'staged_payloads' $_.Exception.Message
 }
 
 try {
