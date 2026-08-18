@@ -94,16 +94,20 @@ custom domain`, all `MUST_SERVE` paths `200`, and identical content on both host
 
 ## Secondary findings
 
-- **Two SPF records on the apex** — a hard bug, independent of the diagram:
+- **Duplicate SPF record — observed during the audit, since resolved.** At the start of
+  this audit the apex carried two SPF records:
 
   ```
   v=spf1 ip4:197.185.157.101 include:samsquaredsoftwares.co.za ~all
   v=spf1 ~all
   ```
 
-  RFC 7208 §4.5 permits exactly one. Two produce a `permerror`, so SPF evaluation fails
-  outright and receivers may reject or quarantine mail from the domain. Delete the
-  redundant `v=spf1 ~all` record and keep the specific one.
+  RFC 7208 §4.5 permits exactly one; two yield a `permerror`, so SPF evaluation fails
+  outright and receivers may reject or quarantine mail from the domain. Re-checking
+  against both `1.1.1.1` and `8.8.8.8` later in the same session showed only the specific
+  record remaining, so this is no longer live — the stray `v=spf1 ~all` was either removed
+  mid-audit or was a propagating intermediate state. Recorded here because the health
+  check retains an SPF-count assertion to catch the regression if it recurs.
 
 - **The `www → apex` 301 is generated at the GitHub origin, not the Cloudflare edge.**
   The redirect response carries `x-github-request-id` and `cf-cache-status: DYNAMIC`, so
