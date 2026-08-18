@@ -11,6 +11,10 @@ work locally, in CI, and when the package is deployed:
     SNOWFLAKE_DATABASE    optional
     SNOWFLAKE_SCHEMA      optional
     SNOWFLAKE_ROLE        optional
+
+The connector reads its CA bundle from the environment, so a custom trust store
+is configured with `SAM_CA_BUNDLE` / `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE`
+rather than a connect parameter - see `tls_trust`.
 """
 
 import json
@@ -18,6 +22,8 @@ import os
 from typing import Any
 
 from sema4ai.actions import ActionError, Secret, action
+
+from tls_trust import CaBundleError, apply_snowflake_ca_env
 
 MAX_ROWS = 1000
 
@@ -81,6 +87,15 @@ def _connect(account: str, user: str, password: str):
         value = os.environ.get(env_var)
         if value:
             connect_args[option] = value
+
+    # The connector resolves its CA bundle from the environment at handshake
+    # time, and silently ignores a path it cannot load. Export the configured
+    # bundle under the names it reads, validating it first so a bad path is a
+    # clear error here instead of an opaque handshake failure later.
+    try:
+        apply_snowflake_ca_env()
+    except CaBundleError as e:
+        raise ActionError(str(e))
 
     try:
         return snowflake.connector.connect(**connect_args)
