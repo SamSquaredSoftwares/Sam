@@ -124,6 +124,11 @@ Two ordering rules from the runbook that the driver cannot enforce for you:
 ./.venv/bin/python -m pytest tests/ -q
 ```
 
+`.github/workflows/ci.yml` runs the same suite on every push and pull request,
+plus a parse check over every `.ps1` in the repo. The parse check matters because
+phase scripts are shipped to a live trading venue and run there, so a syntax
+error otherwise costs a round trip against a real POS box.
+
 44 tests, transport stubbed — they verify the decisions (error classification,
 command construction and quoting, the access verdict, CLI wiring), not impacket.
 The PowerShell is separately parse-checked with
