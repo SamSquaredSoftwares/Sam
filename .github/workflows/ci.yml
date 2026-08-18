@@ -1,8 +1,11 @@
 name: CI
 
+# push is restricted to main so a branch with an open pull request is not built
+# twice for the same commit (once for push, once for pull_request). Branch commits
+# are covered by the pull_request trigger; main is covered post-merge.
 on:
   push:
-    branches: [main, 'claude/**']
+    branches: [main]
   pull_request:
 
 jobs:
