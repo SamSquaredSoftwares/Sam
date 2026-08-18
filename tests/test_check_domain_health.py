@@ -372,6 +372,10 @@ class _TLSServer:
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind(("127.0.0.1", 0))
         self._sock.listen(8)
+        # Wake out of accept() periodically so stop() does not have to wait for a
+        # client: closing the listening socket cannot interrupt a thread that is
+        # parked in recv() on an already-accepted connection.
+        self._sock.settimeout(0.5)
         self.port = self._sock.getsockname()[1]
         self._running = True
         self._thread = threading.Thread(target=self._serve, daemon=True)
@@ -381,13 +385,26 @@ class _TLSServer:
         while self._running:
             try:
                 conn, _ = self._sock.accept()
+            except socket.timeout:  # noqa: UP041
+                # Not TimeoutError: the two were only unified in Python 3.10,
+                # and this suite supports 3.9, where socket.timeout is a
+                # distinct OSError subclass that TimeoutError would not catch.
+                continue  # Idle tick; re-check _running.
             except OSError:
-                return
+                return  # Listening socket closed by stop().
+            # Bound every client interaction so a half-open connection cannot
+            # keep this thread alive past stop().
+            conn.settimeout(1.0)
             try:
                 with self._context.wrap_socket(conn, server_side=True) as tls:
                     tls.recv(1)
             except OSError:
                 pass  # Client rejected the certificate; that is the test's point.
+            finally:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
 
     def stop(self) -> None:
         self._running = False
@@ -514,6 +531,20 @@ class TestTLSAgainstLocalServer(unittest.TestCase):
         self.assertIn("ERR_CERT_COMMON_NAME_INVALID", finding.message)
         self.assertIn("example.com", finding.detail["covers"])
 
+    def test_expired_certificate_is_rejected_at_the_chain(self):
+        """An expired leaf fails chain verification, so it never reaches the
+        expiry arithmetic - it surfaces as an untrusted chain. Either way the
+        host is reported as a failure."""
+        server = self._serve("expired", ["localhost"], not_after_days=-1)
+        result = cdh.fetch_cert("localhost", server.port, timeout=5)
+        self.assertEqual(result["outcome"], "untrusted")
+        self.assertIn("expired", result["error"].lower())
+
+        report = cdh.HostReport("localhost")
+        with mock.patch.object(cdh, "fetch_cert", return_value=result):
+            cdh.check_tls(report, warn_days=21, timeout=5)
+        self.assertEqual(report.level, cdh.FAIL)
+
     def test_untrusted_chain_is_detected(self):
         server = self._serve("selfsigned", ["localhost"], self_signed=True)
         result = cdh.fetch_cert("localhost", server.port, timeout=5)
@@ -557,6 +588,46 @@ class TestTLSAgainstLocalServer(unittest.TestCase):
         with mock.patch.object(cdh, "fetch_cert", return_value=result):
             cdh.check_tls(report, warn_days=21, timeout=3)
         self.assertEqual(report.level, cdh.FAIL)
+
+
+class TestExpiryReporting(unittest.TestCase):
+    """Covers the expiry arithmetic directly.
+
+    A verified chain cannot carry an expired leaf, so the `days_left < 0` branch
+    is not reachable through a real handshake - it is defensive, and tested here
+    against a synthesised result.
+    """
+
+    def _run(self, not_after, warn_days=21):
+        result = {
+            "outcome": "verified",
+            "error": "",
+            "cert": {},
+            "names": ["localhost"],
+            "issuer": "Test CA",
+            "not_after": not_after,
+            "protocol": "TLSv1.3",
+            "cipher": "",
+        }
+        report = cdh.HostReport("localhost")
+        with mock.patch.object(cdh, "fetch_cert", return_value=result):
+            cdh.check_tls(report, warn_days=warn_days, timeout=1)
+        return report
+
+    def test_expired_certificate_reports_days_since_expiry(self):
+        report = self._run("Jan  1 00:00:00 2020 GMT")
+        self.assertEqual(report.level, cdh.FAIL)
+        expiry = next(f for f in report.findings if f.check == "tls.expiry")
+        self.assertIn("expired", expiry.message)
+        self.assertLess(expiry.detail["days_left"], 0)
+
+    def test_unparseable_not_after_warns_rather_than_crashing(self):
+        report = self._run("not a date")
+        self.assertEqual(report.level, cdh.WARN)
+
+    def test_missing_not_after_is_not_reported(self):
+        report = self._run("")
+        self.assertFalse(any(f.check == "tls.expiry" for f in report.findings))
 
 
 class TestCheckIssuer(unittest.TestCase):
