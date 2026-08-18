@@ -8,5 +8,15 @@ __pycache__/
 .venv/
 venv/
 
+# Secrets
+.env
+
+# Action Server
+.datadir/
+devdata/
+output/
+.devrun/
+*.zip
+
 # OS / editor
 .DS_Store

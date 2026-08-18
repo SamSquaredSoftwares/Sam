@@ -1,0 +1,27 @@
+name: sam-actions
+description: Actions served by the Sam Sema4.ai Action Server.
+version: 0.1.0
+spec-version: v2
+
+documentation: https://github.com/SamSquaredSoftwares/Sam
+
+dependencies:
+  conda-forge:
+    - python=3.12.8
+    - uv=0.4.30
+  pypi:
+    - sema4ai-actions=1.6.6
+    - anthropic=0.121.0
+    - snowflake-connector-python=4.7.2
+
+packaging:
+  exclude:
+    - ./.git/**
+    - ./.venv/**
+    - ./.vscode/**
+    - ./.devrun/**
+    - ./.datadir/**
+    - ./devdata/**
+    - ./output/**
+    - ./**/*.pyc
+    - ./**/*.zip
