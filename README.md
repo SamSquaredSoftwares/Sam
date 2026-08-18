@@ -10,6 +10,10 @@ actions/            The action package
   actions.py        The @action definitions
 scripts/
   run_local.sh      Start the Action Server in unmanaged mode (no RCC needed)
+  check_domain_health.py
+                    Assert the website's apex and www hostnames serve valid HTTPS
+tests/              Unit tests (stdlib `unittest`)
+docs/               Blueprint and operational runbooks
 requirements.txt    Dependencies for the local virtualenv
 ```
 
@@ -118,9 +122,52 @@ cd actions
 action-server start   # bootstraps the RCC-managed environment automatically
 ```
 
+## Domain health check
+
+`scripts/check_domain_health.py` verifies that both the apex and `www` hostnames
+of the website serve valid HTTPS. It exists because of the 17 Aug 2026
+`NET::ERR_CERT_COMMON_NAME_INVALID` incident on `www.samsquaredsoftwares.com`,
+which was completely invisible from the apex — see
+[`docs/DOMAIN_TLS_RUNBOOK.md`](docs/DOMAIN_TLS_RUNBOOK.md) for the diagnosis and
+the Cloudflare-side fix.
+
+It checks DNS (flagging answers that reach the origin instead of the CDN edge),
+certificate chain validity and hostname coverage with browser wildcard rules,
+days to expiry, the redirect chain, and the HSTS header.
+
+```bash
+./scripts/check_domain_health.py
+./scripts/check_domain_health.py --apex example.com --warn-days 30
+./scripts/check_domain_health.py --json          # machine-readable
+```
+
+Stdlib only — no install step, runs on any Python 3.9+. Exit codes suit a
+monitor: `0` healthy, `1` warnings, `2` failure.
+
+When running anywhere that might inspect TLS (corporate proxy, sandboxed CI),
+always pin the expected issuer. Otherwise an interceptor's certificate — valid,
+and signed by a CA the machine trusts — makes every check pass while telling you
+nothing about the real origin:
+
+```bash
+./scripts/check_domain_health.py --expect-issuer "Google Trust Services"
+```
+
 ## Development
 
 ```bash
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -r requirements.txt
 ```
+
+### Tests
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+The certificate tests perform real TLS handshakes against a local server using a
+throwaway private CA, so the hostname-mismatch, untrusted-chain, and expiry paths
+are genuinely exercised. They need `cryptography` to mint those certificates
+(installed with `requirements.txt` as a transitive dependency) and skip cleanly
+if it is unavailable. Everything else is stdlib only and runs offline.
