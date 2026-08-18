@@ -32,7 +32,7 @@ try:
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
     HAVE_CRYPTOGRAPHY = True
 except BaseException:  # pragma: no cover - exercised only on minimal installs
@@ -438,6 +438,24 @@ class TestTLSAgainstLocalServer(unittest.TestCase):
             .not_valid_before(now - timedelta(days=1))
             .not_valid_after(now + timedelta(days=365))
             .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(cls.ca_key.public_key()),
+                critical=False,
+            )
+            .add_extension(
+                x509.KeyUsage(
+                    digital_signature=False,
+                    content_commitment=False,
+                    key_encipherment=False,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    key_cert_sign=True,
+                    crl_sign=True,
+                    encipher_only=False,
+                    decipher_only=False,
+                ),
+                critical=True,
+            )
             .sign(cls.ca_key, hashes.SHA256())
         )
 
@@ -465,7 +483,15 @@ class TestTLSAgainstLocalServer(unittest.TestCase):
         not_after_days: int = 90,
         self_signed: bool = False,
     ) -> tuple[str, str]:
-        """Mint a leaf certificate and return its `(certfile, keyfile)` paths."""
+        """Mint a leaf certificate and return its `(certfile, keyfile)` paths.
+
+        The extension set is deliberately complete - key identifiers, basic
+        constraints, key usage. Python 3.13 enables `ssl.VERIFY_X509_STRICT` in
+        `create_default_context()`, which rejects a leaf with no Authority Key
+        Identifier. Without these, every certificate here fails chain
+        verification on 3.13 and the tests silently measure the wrong branch.
+        Real CA-issued certificates carry all of this.
+        """
         key = ec.generate_private_key(ec.SECP256R1())
         subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, sans[0])])
         now = datetime.now(timezone.utc)
@@ -479,6 +505,35 @@ class TestTLSAgainstLocalServer(unittest.TestCase):
             .not_valid_after(now + timedelta(days=not_after_days))
             .add_extension(
                 x509.SubjectAlternativeName([x509.DNSName(san) for san in sans]),
+                critical=False,
+            )
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+                critical=False,
+            )
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(
+                    key.public_key() if self_signed else self.ca_key.public_key()
+                ),
+                critical=False,
+            )
+            .add_extension(
+                x509.KeyUsage(
+                    digital_signature=True,
+                    content_commitment=False,
+                    key_encipherment=False,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    key_cert_sign=False,
+                    crl_sign=False,
+                    encipher_only=False,
+                    decipher_only=False,
+                ),
+                critical=True,
+            )
+            .add_extension(
+                x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
                 critical=False,
             )
         )
