@@ -15,17 +15,30 @@
 .android/*
 !.android/adbkey.pub
 
-# Action Package source. Un-exclude the directory first - git will not descend
-# into an excluded directory, so the "!dir/" line has to precede "!dir/**".
+# Project source directories. Un-exclude each directory first - git will not
+# descend into an excluded directory, so the "!dir/" line has to precede
+# "!dir/**".
 !actions/
 !actions/**
+!db/
+!db/**
+!docs/
+!docs/**
+!managed-agents/
+!managed-agents/**
 !scripts/
 !scripts/**
+!tests/
+!tests/**
 
 # ...but never the generated noise inside them. These come last so they win:
 # the last matching pattern decides.
 **/__pycache__/
 **/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/*.egg-info/
 **/.venv/
 **/venv/
 
@@ -39,3 +52,6 @@
 **/output/
 **/.devrun/
 **/*.zip
+
+# OS / editor:
+**/.DS_Store
