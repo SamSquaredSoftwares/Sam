@@ -41,6 +41,7 @@
 **/*.egg-info/
 **/.venv/
 **/venv/
+**/node_modules/
 
 # Secrets stay out even inside allowlisted directories (.env.example above is
 # the only exception):
