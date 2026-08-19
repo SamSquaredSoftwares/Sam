@@ -246,8 +246,13 @@ if need gh && gh auth status >/dev/null 2>&1; then
         "its Pages cname is '${expected_cname:-null}'${claimed:+; the domain is held by $claimed}. GitHub binds a custom domain to one Pages site, so the CNAME file in $PAGES_REPO stays inert until that claim is released."
   fi
 
-  [[ "$enforced" == "true" ]] && ok "$PAGES_REPO has Enforce HTTPS on" \
-    || warn "$PAGES_REPO does not enforce HTTPS" "without a GitHub-issued cert for $APEX, Cloudflare cannot use Full (strict) to the origin"
+  if [[ "$enforced" == "true" ]]; then
+    ok "$PAGES_REPO has Enforce HTTPS on"
+  elif (( ${proxied:-0} )); then
+    ok "origin Enforce HTTPS off -- expected behind the Cloudflare proxy ${c_dim}(GitHub's DNS pre-check sees Cloudflare's IPs, so it cannot issue an apex cert; HTTPS is enforced at the edge instead)${c_off}"
+  else
+    warn "$PAGES_REPO does not enforce HTTPS" "domain is not proxied, so GitHub should be able to issue a cert and enforce HTTPS"
+  fi
 else
   warn "Pages ownership checks skipped" "gh CLI not installed or not authenticated"
 fi
@@ -258,7 +263,7 @@ if need openssl; then
   if [[ "$osub" == *"$APEX"* ]]; then
     ok "origin serves a cert for $APEX -- Cloudflare Full (strict) is viable ${c_dim}($osub)${c_off}"
   elif [[ -n "$osub" ]]; then
-    warn "origin serves $osub, not $APEX" "Cloudflare 'Full' works (encrypted, name not validated); 'Full (strict)' would break until GitHub issues a cert for $APEX"
+    warn "origin serves $osub, not $APEX" "Cloudflare 'Full' works (encrypted, name not validated). While the domain is proxied GitHub cannot issue an apex cert, so 'Full (strict)' is permanently incompatible with this architecture -- keep the zone on Full"
   fi
 fi
 
@@ -276,8 +281,10 @@ done
 # The custom domain and the canonical *.github.io host should serve the same build.
 if need md5sum; then
   gh_host="${PAGES_REPO%%/*}.github.io"; gh_host="$(tr '[:upper:]' '[:lower:]' <<<"$gh_host")"
-  a="$(curl -sS --max-time "$CURL_TIMEOUT" "https://$APEX/" 2>/dev/null | md5sum | cut -d' ' -f1)"
-  b="$(curl -sS --max-time "$CURL_TIMEOUT" "https://$gh_host/" 2>/dev/null | md5sum | cut -d' ' -f1)"
+  # -L on both: once the custom domain is bound, the *.github.io host 301s to
+  # the apex, so comparing raw bodies would always differ.
+  a="$(curl -sSL --max-time "$CURL_TIMEOUT" "https://$APEX/" 2>/dev/null | md5sum | cut -d' ' -f1)"
+  b="$(curl -sSL --max-time "$CURL_TIMEOUT" "https://$gh_host/" 2>/dev/null | md5sum | cut -d' ' -f1)"
   if [[ -n "$a" && -n "$b" ]]; then
     [[ "$a" == "$b" ]] && ok "$APEX and $gh_host serve identical content" \
       || bad "$APEX and $gh_host serve DIFFERENT content" "two separate Pages deployments are live; the custom domain is not serving $PAGES_REPO"

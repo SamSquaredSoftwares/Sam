@@ -7,17 +7,19 @@ browser ──► Cloudflare (valid wildcard cert) ──► GitHub Pages (origi
                                                   └─ 301 www → apex
 ```
 
-Verified live on 2026-08-17. Re-check any time with:
+Audited 2026-08-17; **primary defect fixed and verified 2026-08-19**. Re-check any
+time with:
 
 ```bash
 ./scripts/check_domain_health.sh          # exits non-zero on any failure
 ./scripts/check_domain_health.sh --quiet  # failures + summary only
 ```
 
-## Status: the transport layer matches the diagram; the origin serves the wrong site
+## Status: the architecture matches the diagram end to end
 
-Everything from the browser to Cloudflare is correct. The break is one layer deeper —
-Cloudflare is faithfully proxying to a GitHub Pages site that is **not** the real website.
+Everything from the browser to Cloudflare was correct from the start. The break was one
+layer deeper — the custom domain was bound to the wrong GitHub Pages site — and was
+fixed on 2026-08-19 (see *Remediation — executed* below).
 
 ### Working
 
@@ -39,58 +41,63 @@ The wildcard cert covers `www`, so there is no certificate problem on either hos
 > confirm against a public resolver — `check_domain_health.sh` queries `1.1.1.1` for
 > precisely this reason.
 
-### Broken — the custom domain is bound to the wrong Pages site
+### Fixed 2026-08-19 — the custom domain was bound to the wrong Pages site
 
-GitHub binds a custom domain to **exactly one** Pages site. That binding currently
-belongs to a one-page placeholder repo, not the real website:
+GitHub binds a custom domain to **exactly one** Pages site. Until 2026-08-19 that
+binding belonged to a one-page placeholder repo, not the real website:
 
 | | Holds `samsquaredsoftwares.com` | Contents | Last commit |
 | --- | --- | --- | --- |
 | `samgarib-debug/samsquaredsoftwares-site` | **yes** (`cname: samsquaredsoftwares.com`) | `CNAME`, `index.html` only | 2026-08-09 |
 | `SamSquaredSoftwares/SamSquaredSoftwares.github.io` | **no** (`cname: null`) | full 8-page site + `styles.css`, `script.js`, `logo.png` | 2026-08-12 |
 
-Consequences, all reproduced against the live domain:
+Consequences while the defect was live, all reproduced against the domain at the time:
+the apex served the 2026-08-09 placeholder, every deep link 404'd (the same 404s
+reproduced against the GitHub origin IPs directly, so Cloudflare was never the cause),
+and the `CNAME` file committed to the org repo on 2026-08-12 was inert — GitHub
+silently refuses a domain already claimed elsewhere.
 
-- `https://samsquaredsoftwares.com/` serves the **2026-08-09 placeholder**
-  (`<title>Sam Squared Softwares — SAMePOS</title>`), not the current site
-  (`<title>SAM² — Smarter Softwares. Squared.</title>`).
-- Every deep link 404s: `/about.html`, `/contact.html`, `/how-it-works.html`,
-  `/pricing.html`, `/product.html`, `/styles.css`, `/script.js`. Those files exist only
-  in the org repo, which the domain is not bound to.
-- The identical 404s occur when querying the GitHub origin IPs directly, so **Cloudflare
-  is not the cause** and no amount of cache purging will fix it.
-- The `CNAME` file committed to the org repo on 2026-08-12 ("Add CNAME for custom
-  domain") is **inert** — GitHub silently refuses a domain already claimed elsewhere.
+## Remediation — executed 2026-08-19
 
-## Remediation
+Order mattered: the domain had to be released before it could be re-bound, and the
+release was deferred until org-repo settings access was confirmed, because releasing
+without the ability to re-bind would have turned a stale-content bug into a full outage.
 
-Order matters: the domain must be released before it can be re-bound.
+1. **Released the claim** on `samgarib-debug/samsquaredsoftwares-site` via
+   `PUT /repos/{owner}/{repo}/pages` with `cname: null` (that account's token has admin
+   there).
+2. **Bound the domain to the real site** in
+   `SamSquaredSoftwares/SamSquaredSoftwares.github.io` → Settings → Pages (browser
+   session with org access; the API token had no write access to the org repo). GitHub
+   reported **"DNS check successful"** and the site URL flipped to
+   `https://samsquaredsoftwares.com/`. Outage window: under four minutes.
+3. **No cache purge was needed** — the zone serves HTML with `cf-cache-status: DYNAMIC`,
+   and content flipped immediately.
 
-1. **Release the claim.** In `samgarib-debug/samsquaredsoftwares-site` →
-   Settings → Pages → clear the custom domain. (Deleting the repo also works, but
-   clearing the field is reversible.)
-2. **Bind the domain to the real site.** In
-   `SamSquaredSoftwares/SamSquaredSoftwares.github.io` → Settings → Pages → set the
-   custom domain to `samsquaredsoftwares.com`. The `CNAME` file already holds the right
-   value, so this should bind immediately once step 1 has propagated.
-3. **Purge the Cloudflare cache** for the zone, to evict the cached Aug-9 `index.html`.
-4. **Wait for GitHub to issue the origin certificate** for the apex, then enable
-   *Enforce HTTPS* on the org repo.
-5. **Set Cloudflare SSL/TLS mode.** Until step 4 completes, GitHub presents only
-   `*.github.io` at the origin, so use **Full** — encrypted, name not validated.
-   **Do not use Full (strict)** before step 4: it will fail the origin name check and
-   take the site down. After step 4, move to Full (strict).
-6. **Re-run the health check.** All content checks should pass and the apex should
-   serve byte-identical content to `samsquaredsoftwares.github.io`.
+Verified after the fix: all eight `MUST_SERVE` paths return `200`, the apex serves the
+real site (`<title>SAM² — Smarter Softwares. Squared.</title>`), and following
+redirects, the apex and `samsquaredsoftwares.github.io` serve byte-identical content
+(the `github.io` host now 301s to the apex, as expected once a custom domain binds).
 
-### Verifying the fix
+### TLS posture — permanent, by design of this architecture
+
+GitHub reports *Enforce HTTPS unavailable* for the custom domain. This is **expected
+and permanent** while Cloudflare proxies the domain: GitHub's pre-issuance DNS check
+sees Cloudflare's anycast IPs rather than GitHub's own, so it will never provision an
+apex certificate. The consequences:
+
+- Client-facing HTTPS is enforced at the **Cloudflare edge** (wildcard cert +
+  HTTP→HTTPS redirect), not at GitHub. This matches the diagram.
+- Cloudflare SSL/TLS mode must stay on **Full** (encrypted, origin name not
+  validated). **Full (strict) is permanently incompatible** with this architecture —
+  the origin can only ever present `*.github.io` — and enabling it would take the site
+  down. Do not "upgrade" it during Cloudflare housekeeping.
+- If the domain is ever un-proxied (grey-clouded) to plain GitHub Pages, revisit:
+  GitHub could then issue its own certificate and *Enforce HTTPS* should be enabled.
 
 ```bash
-./scripts/check_domain_health.sh
+./scripts/check_domain_health.sh   # all content and ownership checks now pass
 ```
-
-Expected after remediation: `SamSquaredSoftwares/SamSquaredSoftwares.github.io owns the
-custom domain`, all `MUST_SERVE` paths `200`, and identical content on both hosts.
 
 ## Secondary findings
 
@@ -124,11 +131,15 @@ custom domain`, all `MUST_SERVE` paths `200`, and identical content on both host
   DNS-only subdomain would hard-fail with a non-bypassable error.
 
 - **No CAA record.** Any public CA may currently issue for the domain. A CAA record
-  restricts issuance, but must include every CA in use — currently Google Trust Services
-  (Cloudflare Universal SSL) and Let's Encrypt (GitHub Pages, after step 4). A wrong CAA
-  record breaks renewal, so add it only after step 4 and verify with the health check.
+  restricts issuance, but must include every CA Cloudflare Universal SSL may use for the
+  edge certificate (Google Trust Services today; Cloudflare also issues via Let's
+  Encrypt and SSL.com depending on rotation — include all three, or manage CAA through
+  Cloudflare's own dashboard, which maintains the correct set automatically). A wrong
+  CAA record silently breaks certificate renewal.
 
 - **Domain not verified for the GitHub org.** `protected_domain_state` is `null`. GitHub's
   verified-domains feature prevents another account from claiming the domain — which is
-  exactly the failure mode that produced the primary bug above. Worth enabling once the
-  domain is bound to the org repo.
+  exactly the failure mode that produced the primary bug above, and nothing stops it
+  recurring. Now that the domain is bound to the org repo, verify it under
+  Organization Settings → Verified and approved domains (requires adding a DNS TXT
+  record in Cloudflare).
