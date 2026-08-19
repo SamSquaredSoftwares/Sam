@@ -8,10 +8,29 @@ A [Sema4.ai](https://sema4.ai) Action Package plus an [Action Server](https://gi
 actions/            The action package
   package.yaml      Package metadata + managed-environment dependencies (RCC)
   actions.py        The @action definitions
+  snowflake_actions.py  The Snowflake @action definitions
 scripts/
   run_local.sh      Start the Action Server in unmanaged mode (no RCC needed)
+docs/
+  AI_AGENT_BLUEPRINT.md  How to build an AI agent on top of these actions
+db/                 Licensing schema, migrations, and SQL behavior tests
+managed-agents/     Claude Code managed subagents + cross-platform installer
+tests/              Python test suite
 requirements.txt    Dependencies for the local virtualenv
 ```
+
+## Documentation
+
+- **[The AI Agent Blueprint](docs/AI_AGENT_BLUEPRINT.md)** — how to build an AI
+  agent on top of this repo: deciding whether a task needs an agent at all,
+  choosing among the four build approaches, designing the tool surface from
+  these actions, a runnable Snowflake analyst agent, and production hardening
+  (secrets, error handling, prompt caching, context management, evals).
+- [`managed-agents/README.md`](managed-agents/README.md) — the Claude Code
+  managed subagents used to work *on* this repo, and how to install them.
+  (Distinct from the agents the blueprint teaches you to build *with* this repo.)
+- [`db/README.md`](db/README.md) — licensing schema, migrations, and how to run
+  the database tests.
 
 ## Actions
 
