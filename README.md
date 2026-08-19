@@ -10,11 +10,30 @@ actions/            The action package
   actions.py        The @action definitions
   snowflake_actions.py  The Snowflake @action definitions
   tls_trust.py      Shared CA-bundle handling for outbound HTTPS
+agents/
+  snowflake_analyst.py  Claude agent that answers questions via the actions
 scripts/
   run_local.sh      Start the Action Server in unmanaged mode (no RCC needed)
-tests/              Unit tests (stdlib unittest, no runner required)
+docs/
+  AI_AGENT_BLUEPRINT.md  How to build an AI agent on top of these actions
+db/                 Licensing schema, migrations, and SQL behavior tests
+managed-agents/     Claude Code managed subagents + cross-platform installer
+tests/              Python test suite
 requirements.txt    Dependencies for the local virtualenv
 ```
+
+## Documentation
+
+- **[The AI Agent Blueprint](docs/AI_AGENT_BLUEPRINT.md)** — how to build an AI
+  agent on top of this repo: deciding whether a task needs an agent at all,
+  choosing among the four build approaches, designing the tool surface from
+  these actions, a runnable Snowflake analyst agent, and production hardening
+  (secrets, error handling, prompt caching, context management, evals).
+- [`managed-agents/README.md`](managed-agents/README.md) — the Claude Code
+  managed subagents used to work *on* this repo, and how to install them.
+  (Distinct from the agents the blueprint teaches you to build *with* this repo.)
+- [`db/README.md`](db/README.md) — licensing schema, migrations, and how to run
+  the database tests.
 
 ## Actions
 
@@ -59,6 +78,22 @@ curl -X POST http://localhost:8080/api/actions/sam-actions/ask-claude/run \
 
 Set `ANTHROPIC_API_KEY` in the server's environment (or pass the `api_key`
 secret through the action context) before calling `ask_claude`.
+
+## Running an agent
+
+With the server up, `agents/snowflake_analyst.py` answers questions by letting
+Claude query the warehouse through the Snowflake actions:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+python -m agents.snowflake_analyst "Which 5 customers generated the most revenue last quarter?"
+```
+
+It discovers the action package from the server's OpenAPI spec; use `--server`
+(or `SAM_ACTION_SERVER`) to point it elsewhere, and `--effort low` to trade
+depth for speed. The Snowflake credentials stay with the Action Server — the
+agent process only ever sees `ANTHROPIC_API_KEY`. See
+[The AI Agent Blueprint](docs/AI_AGENT_BLUEPRINT.md) for how it is built.
 
 ## Snowflake configuration
 
@@ -149,8 +184,13 @@ proxy is to trust its CA, never to stop checking.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests     # or: pytest tests
+pip install pytest      # not in requirements.txt; the suite needs it
+pytest tests
 ```
+
+Use `pytest`. `python -m unittest discover -s tests` also works but collects
+only the `unittest`-style tests and silently ignores the function-style ones,
+so it reports a pass having run a fraction of the suite.
 
 The certificate tests need `cryptography`, which arrives transitively with
 `requirements.txt`; on a minimal install they skip. Set
