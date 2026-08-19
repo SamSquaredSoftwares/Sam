@@ -306,23 +306,47 @@ else
   warn "could not read TXT records for $APEX" "install dig, or run where PowerShell/Resolve-DnsName is available"
 fi
 
-# CAA has no Resolve-DnsName enum value, so it needs dig.
+# CAA: dig if available, else DNS-over-HTTPS JSON (Resolve-DnsName has no CAA type).
+caa=""
 if need dig; then
   caa="$(dig +short +time=3 @"$RESOLVER" "$APEX" CAA 2>/dev/null)"
-  [[ -n "$caa" ]] && ok "CAA record present" \
-    || warn "no CAA record on $APEX" "any public CA may issue for this domain; a CAA record restricts issuance to the CAs you actually use"
+elif need python; then
+  caa="$(curl -sS --max-time 10 "https://cloudflare-dns.com/dns-query?name=$APEX&type=CAA" \
+          -H 'accept: application/dns-json' 2>/dev/null \
+        | python -c "import json,sys
+for a in json.load(sys.stdin).get('Answer',[]): print(a['data'])" 2>/dev/null)"
+fi
+if [[ -z "$caa" ]]; then
+  warn "no CAA record on $APEX" "any public CA may issue for this domain; Cloudflare's managed CAA (or a manual set covering its Universal SSL CAs) restricts issuance"
 else
-  (( QUIET )) || printf '  %sSKIP%s CAA check (needs dig; Resolve-DnsName has no CAA type)\n' "$c_dim" "$c_off"
+  # The zone relies on Cloudflare Universal SSL, which currently issues via
+  # these CAs; a CAA set missing one of them can silently break cert renewal.
+  missing=""
+  for ca in pki.goog letsencrypt.org ssl.com; do
+    grep -qF "\"$ca" <<<"$caa" || missing="$missing $ca"
+  done
+  if [[ -z "$missing" ]]; then
+    ok "CAA present and covers Cloudflare's issuing CAs ${c_dim}($(grep -c 'issue' <<<"$caa") records)${c_off}"
+  else
+    warn "CAA present but missing:${missing}" "Cloudflare Universal SSL rotates across these CAs; a renewal routed to a missing one fails"
+  fi
 fi
 
 hsts="$(hdrs "https://$APEX/" | grep -i '^strict-transport-security:' | tr -d '\r' | cut -d' ' -f2-)"
 if [[ -n "$hsts" ]]; then
   ok "HSTS: $hsts"
-  if grep -qi 'preload' <<<"$hsts" && need curl; then
+  if grep -qi 'preload' <<<"$hsts"; then
+    maxage="$(grep -oiE 'max-age=[0-9]+' <<<"$hsts" | grep -oE '[0-9]+' | head -1)"
+    if [[ -n "$maxage" ]] && (( maxage < 31536000 )); then
+      warn "HSTS sends 'preload' with max-age=$maxage" "hstspreload.org requires max-age >= 31536000 (1 year); submission is rejected below that"
+    fi
     st="$(curl -sS --max-time 15 "https://hstspreload.org/api/v2/status?domain=$APEX" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4)"
-    [[ "$st" == "preloaded" ]] && ok "$APEX is on the HSTS preload list" \
-      || warn "HSTS sends 'preload' but $APEX is not on the preload list (status: ${st:-unknown})" \
-              "the directive is inert until the domain is submitted at hstspreload.org"
+    case "$st" in
+      preloaded) ok "$APEX is on the HSTS preload list" ;;
+      pending)   ok "$APEX preload submission is pending ${c_dim}(ships in a future Chromium release; other browsers follow its list)${c_off}" ;;
+      *)         warn "HSTS sends 'preload' but $APEX is not on the preload list (status: ${st:-unknown})" \
+                      "the directive is inert until the domain is submitted at hstspreload.org" ;;
+    esac
   fi
 else
   warn "no HSTS header on $APEX"

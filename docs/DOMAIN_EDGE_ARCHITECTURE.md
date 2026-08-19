@@ -130,12 +130,12 @@ apex certificate. The consequences:
   subdomain must be HTTPS-capable — the wildcard cert covers proxied subdomains, but a
   DNS-only subdomain would hard-fail with a non-bypassable error.
 
-- **No CAA record.** Any public CA may currently issue for the domain. A CAA record
-  restricts issuance, but must include every CA Cloudflare Universal SSL may use for the
-  edge certificate (Google Trust Services today; Cloudflare also issues via Let's
-  Encrypt and SSL.com depending on rotation — include all three, or manage CAA through
-  Cloudflare's own dashboard, which maintains the correct set automatically). A wrong
-  CAA record silently breaks certificate renewal.
+- **CAA — resolved.** The audit found no CAA record; as of 2026-08-19 the zone serves
+  Cloudflare's full managed CAA set (11 records: `issue` + `issuewild` for Comodo/
+  Sectigo, DigiCert, Let's Encrypt, Google Trust Services, and SSL.com — every CA
+  Universal SSL can rotate across). Nothing to add manually; a hand-written record
+  alongside the managed set could only break renewal. The health check now verifies
+  the set via DNS-over-HTTPS and warns if a required CA goes missing.
 
 - **Domain not verified for the GitHub org.** `protected_domain_state` is `null`. GitHub's
   verified-domains feature prevents another account from claiming the domain — which is
