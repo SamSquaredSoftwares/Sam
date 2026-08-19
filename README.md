@@ -9,6 +9,8 @@ actions/            The action package
   package.yaml      Package metadata + managed-environment dependencies (RCC)
   actions.py        The @action definitions
   snowflake_actions.py  The Snowflake @action definitions
+agents/
+  snowflake_analyst.py  Claude agent that answers questions via the actions
 scripts/
   run_local.sh      Start the Action Server in unmanaged mode (no RCC needed)
 docs/
@@ -75,6 +77,22 @@ curl -X POST http://localhost:8080/api/actions/sam-actions/ask-claude/run \
 
 Set `ANTHROPIC_API_KEY` in the server's environment (or pass the `api_key`
 secret through the action context) before calling `ask_claude`.
+
+## Running an agent
+
+With the server up, `agents/snowflake_analyst.py` answers questions by letting
+Claude query the warehouse through the Snowflake actions:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+python -m agents.snowflake_analyst "Which 5 customers generated the most revenue last quarter?"
+```
+
+It discovers the action package from the server's OpenAPI spec; use `--server`
+(or `SAM_ACTION_SERVER`) to point it elsewhere, and `--effort low` to trade
+depth for speed. The Snowflake credentials stay with the Action Server — the
+agent process only ever sees `ANTHROPIC_API_KEY`. See
+[The AI Agent Blueprint](docs/AI_AGENT_BLUEPRINT.md) for how it is built.
 
 ## Snowflake configuration
 
