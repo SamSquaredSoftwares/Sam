@@ -40,8 +40,29 @@ was done from. Until that diff happens, treat these as open:
    activated key elsewhere, migrate that state in rather than letting
    `licence_ensure_trial()` start a fresh trial and silently extend the term.
 
-To produce the diff, supply either the licence-related parts of migrations
-001–023 or `pg_dump -s -t 'licence*' -t 'trial*'` (schema only) from a node.
+### Run the pre-flight check
+
+`db/tools/check_reconciliation.sql` answers all four questions above against a
+real node. It is **strictly read-only** — it reads system catalogs and counts
+rows, creating and modifying nothing — so it is safe on a live trading node:
+
+```bash
+psql -d <node_db> -f db/tools/check_reconciliation.sql > reconcile.txt
+```
+
+It reports: existing `licence`/`trial` objects and their columns, a direct
+collision check against all 16 object names this migration creates (**any `t`
+means reconcile first**), the migration-tracking table and its row count, which
+payment table the guard should attach to, pre-existing licence state row counts,
+and any guard trigger already installed.
+
+Verified against a disposable PostgreSQL 16 cluster in three states: a bare
+database, a database holding a *conflicting* `licence` table of a different
+shape (correctly flagged), and a database with this migration already applied.
+Object and row counts were identical before and after each run.
+
+To complete the diff, send back that output — or the licence-related parts of
+migrations 001–023, or `pg_dump -s -t 'licence*' -t 'trial*'` (schema only).
 
 ## Files
 
@@ -52,6 +73,7 @@ To produce the diff, supply either the licence-related parts of migrations
 | `schema/licensing.schema.sql` | The **same objects** as a standalone consolidated schema for fresh builds / test DBs. Kept byte-identical to the migration body; `run_db_tests.sh` asserts equivalence. |
 | `tests/behavior.sql` | Behavioural assertions (plpgsql `ASSERT`). |
 | `tests/run_db_tests.sh` | Spins up a disposable PG cluster and runs the full verification. |
+| `tools/check_reconciliation.sql` | **Read-only** pre-flight to run on a real node before applying (collision + guard-target report). |
 
 ## The model
 
