@@ -13,6 +13,36 @@ and tested against PG 16).
 > verified against a throwaway cluster only; it has **not** been run against any
 > real node.
 
+## Reconciliation status — READ BEFORE DEPLOYING
+
+This core has **not yet been diffed against the SAMePOS product's own migrations
+(001–023)**; the product source is not available in the repositories this work
+was done from. Until that diff happens, treat these as open:
+
+1. **Name collisions.** If 001–023 already create a licence table/view/function
+   with any of these names, this migration's `CREATE … IF NOT EXISTS` will
+   silently adopt the *existing* object instead of the one defined here, and the
+   shapes may not match. Check first:
+   ```sql
+   SELECT c.relkind, c.relname FROM pg_class c
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname LIKE '%licen%'
+   UNION ALL
+   SELECT 'f', p.proname FROM pg_proc p
+     JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname LIKE '%licen%';
+   ```
+   A non-empty result means reconcile before applying.
+2. **Migration number.** `024` assumes 023 is the product's latest. Renumber if
+   the product has moved on, and match its migration-runner/tracking convention.
+3. **Payment table name** for the guard (see *Enforcement* below).
+4. **Existing licence state.** If the node already stores a trial start or an
+   activated key elsewhere, migrate that state in rather than letting
+   `licence_ensure_trial()` start a fresh trial and silently extend the term.
+
+To produce the diff, supply either the licence-related parts of migrations
+001–023 or `pg_dump -s -t 'licence*' -t 'trial*'` (schema only) from a node.
+
 ## Files
 
 | File | Purpose |
@@ -58,7 +88,15 @@ system-of-record and the enforcement point — not the verifier.
 | `licence_revoke(licence_id[, reason])` | Revoke a licence. |
 | `licence_effective_status()` → `licence_status` (view) | The core. Computes the governing licence and returns `mode`, `state` (`trial`/`extended_trial`/`licensed`/`grace`/`expired`/`none`), `is_valid`, `in_grace`, `expires_at`, `days_remaining`, etc. Precedence: valid **licensed** > valid **extended_trial** > valid **trial**. |
 | `licence_is_valid()` | Boolean helper used by the guard. |
-| `licence_guard_sales()` / `licence_attach_guard([table])` | The optional hard guard (see below). |
+| `licence_guard_sales()` / `licence_attach_guard(table)` / `licence_attach_guard_auto()` | The optional hard guard (see below). |
+
+### Concurrency
+
+`licence_ensure_trial()` takes `pg_advisory_xact_lock(hashtext(install_code))`
+and re-reads under the lock before inserting, and a partial unique index
+(`licence_one_auto_trial_uidx`) is the database-level backstop. Without this, the
+several tablets that hit a node at first boot can each pass a check-then-insert
+and create duplicate trials — the same race the product hit on `business_day`.
 
 ## App integration
 
@@ -82,20 +120,34 @@ Enforcement is **advisory** — the app reads `licence_status` and decides what 
 do (e.g. refuse to open a tab, show a banner). This is the recommended posture:
 the FastAPI app owns the user-facing behaviour.
 
-An **optional hard guard** is also installed: a `BEFORE INSERT` trigger on
-`public.sales_order` that blocks new sales when the licence is invalid. It is
-**gated by `licence_config.hard_enforcement`, which ships `false`**, so it does
-nothing until an admin turns it on:
+An **optional hard guard** is also installed: a `BEFORE INSERT` trigger that
+blocks **payments** when the licence is invalid. It is **gated by
+`licence_config.hard_enforcement`, which ships `false`**, so it does nothing
+until an admin turns it on:
 
 ```sql
-UPDATE licence_config SET hard_enforcement = true;   -- start blocking sales when invalid
+UPDATE licence_config SET hard_enforcement = true;   -- start blocking payments when invalid
 UPDATE licence_config SET hard_enforcement = false;  -- back to advisory only
 ```
 
-If `public.sales_order` doesn't exist when the migration runs, the guard is not
-attached; run `SELECT licence_attach_guard();` once the sales schema is present
-(or `SELECT licence_attach_guard('public.other_table');` to guard a different
-entry point).
+**Why payment and not tab-open.** `sales_order` rows are created when staff open
+a tab (the runbook's gotcha #4 is a NOT NULL violation on
+`sales_order.business_day_id` at `POST /api/orders`). Guarding that insert would
+stop staff opening or continuing tabs and could strand an open shift
+mid-service. Guarding the payment insert lets an in-progress shift keep serving
+while preventing the node from taking money on a dead licence.
+
+The migration attaches the guard via `licence_attach_guard_auto()`, which probes
+`sales_payment`, `sale_payment`, `order_payment`, `payment` and uses the first
+that exists. **The product's real payment table name is not pinned down by the
+runbook** — if it differs, attach explicitly:
+
+```sql
+SELECT licence_attach_guard('public.<payment_table>');
+```
+
+If no payment table exists when the migration runs, the guard is not attached
+and the migration says so in a `NOTICE`.
 
 ## Applying
 
