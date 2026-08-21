@@ -9,6 +9,7 @@ actions/            The action package
   package.yaml      Package metadata + managed-environment dependencies (RCC)
   actions.py        The @action definitions
   snowflake_actions.py  The Snowflake @action definitions
+  tls_trust.py      Shared CA-bundle handling for outbound HTTPS
 agents/
   snowflake_analyst.py  Claude agent that answers questions via the actions
 scripts/
@@ -143,6 +144,58 @@ curl -X POST http://localhost:8080/api/actions/sam-actions/query-snowflake/run \
 
 `query_snowflake` only accepts a single read-only statement
 (SELECT/SHOW/DESCRIBE/WITH/EXPLAIN) and caps results at 1000 rows.
+
+## TLS trust (inspecting proxies and private CAs)
+
+Behind a TLS-terminating proxy - a corporate inspecting proxy, or a sandboxed CI
+runner - the outbound clients do not trust the interceptor's CA, and every call
+fails with a certificate verification error. Point the actions at the right
+bundle with any of:
+
+| Variable             | Notes                                                     |
+| -------------------- | --------------------------------------------------------- |
+| `SAM_CA_BUNDLE`      | Highest priority; specific to this package                 |
+| `REQUESTS_CA_BUNDLE` | Honoured for compatibility with the wider ecosystem        |
+| `SSL_CERT_FILE`      | Honoured; the only name both underlying clients agree on   |
+
+The value is a PEM bundle, or a directory of hashed certificates. One variable
+covers both clients: the Anthropic SDK gets an `httpx` client built against the
+bundle, and the Snowflake connector - which only reads the environment, having
+no CA connect parameter - has the bundle exported under the names it looks for.
+
+```bash
+export SAM_CA_BUNDLE=/path/to/corporate-ca.pem
+./scripts/run_local.sh
+```
+
+`health_check` reports the trust configuration in effect, which makes it a
+one-call diagnostic for this class of failure:
+
+```
+... sema4ai-actions=1.6.6 ca_bundle=/path/to/corporate-ca.pem source=SAM_CA_BUNDLE status=ok
+```
+
+A bundle that is configured but unusable - a mistyped path, an empty file, a PEM
+holding only a CRL - is a hard error naming the offending variable, rather than a
+silent fallback to the default trust store followed by a confusing handshake
+error. Verification itself cannot be turned off: the fix for an interception
+proxy is to trust its CA, never to stop checking.
+
+## Tests
+
+```bash
+pip install pytest      # not in requirements.txt; the suite needs it
+pytest tests
+```
+
+Use `pytest`. `python -m unittest discover -s tests` also works but collects
+only the `unittest`-style tests and silently ignores the function-style ones,
+so it reports a pass having run a fraction of the suite.
+
+The certificate tests need `cryptography`, which arrives transitively with
+`requirements.txt`; on a minimal install they skip. Set
+`SAM_TESTS_REQUIRE_TLS=1` to turn those skips into failures, so CI cannot report
+green while the checks that matter most are quietly not running.
 
 ## Managed environments (production)
 
