@@ -1,0 +1,24 @@
+# Copy to terraform.tfvars and adjust. Every value here already matches the
+# default in variables.tf; the file exists to show what is tunable and to make
+# the two-step rollout in README.md concrete.
+
+project_id = "sam-squared-samepos-prod"
+network    = "samepos-vpc"
+rule_name  = "samepos-allow-iap-ssh"
+
+# --- Step 1: import. Leave these as-is so `terraform plan` reports no changes,
+# which is how you prove the config faithfully describes the live rule.
+description    = ""
+enable_logging = false
+
+# --- Step 2: hardening. Swap to these and apply as a separate, reviewable change.
+# description    = "Allow SSH from the Google IAP TCP-forwarding range only; no public SSH ingress."
+# enable_logging = true
+
+# Applies to instances carrying this network tag.
+target_tags = ["samepos-backend"]
+
+# Preferred scoping: by service account, which cannot be self-assigned the way a
+# network tag can. Setting this makes target_tags inert.
+# target_tags             = []
+# target_service_accounts = ["samepos-backend@sam-squared-samepos-prod.iam.gserviceaccount.com"]

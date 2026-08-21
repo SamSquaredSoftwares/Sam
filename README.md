@@ -10,6 +10,8 @@ actions/            The action package
   actions.py        The @action definitions
 scripts/
   run_local.sh      Start the Action Server in unmanaged mode (no RCC needed)
+infra/
+  terraform/        GCP network baseline (IAP-only SSH firewall rule)
 requirements.txt    Dependencies for the local virtualenv
 ```
 
@@ -117,6 +119,17 @@ pip install sema4ai-action-server
 cd actions
 action-server start   # bootstraps the RCC-managed environment automatically
 ```
+
+## Infrastructure
+
+`infra/terraform/` manages the GCP network baseline for `samepos-vpc` in
+`sam-squared-samepos-prod` — currently the IAP-only SSH ingress rule
+(`samepos-allow-iap-ssh`: `tcp:22` from Google's `35.235.240.0/20` IAP
+TCP-forwarding range only).
+
+The rule pre-exists in the project, so it must be imported before the first
+apply. See [infra/terraform/README.md](infra/terraform/README.md) for the
+two-step import-then-harden rollout.
 
 ## Development
 
