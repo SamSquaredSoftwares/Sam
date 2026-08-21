@@ -1,0 +1,49 @@
+name: CI
+
+# push is restricted to main so a branch with an open pull request is not built
+# twice for the same commit (once for push, once for pull_request). Branch commits
+# are covered by the pull_request trigger; main is covered post-merge.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  driver-tests:
+    name: SAMePOS driver tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pywinrm impacket pytest
+
+      - name: Run driver tests
+        run: pytest tools/samepos-node/tests -q
+
+      # Every phase script is shipped to a live trading venue and run there, so a
+      # syntax error costs a round trip against a real POS box. pwsh is
+      # preinstalled on ubuntu runners; this parses without executing.
+      - name: Parse-check PowerShell scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem -Path . -Filter *.ps1 -Recurse -File | ForEach-Object {
+            $errors = $null
+            $tokens = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName, [ref] $tokens, [ref] $errors)
+            if ($errors) {
+              $failed = $true
+              foreach ($e in $errors) {
+                Write-Host "::error file=$($_.FullName),line=$($e.Extent.StartLineNumber)::$($e.Message)"
+              }
+            } else {
+              Write-Host "ok: $($_.FullName)"
+            }
+          }
+          if ($failed) { exit 1 }
