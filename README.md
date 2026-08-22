@@ -141,8 +141,33 @@ curl -X POST http://localhost:8080/api/actions/sam-actions/query-snowflake/run \
   -d '{"sql": "select current_timestamp()", "max_rows": 10}'
 ```
 
-`query_snowflake` only accepts a single read-only statement
-(SELECT/SHOW/DESCRIBE/WITH/EXPLAIN) and caps results at 1000 rows.
+### Read-only guard
+
+`query_snowflake` accepts a single read-only statement (SELECT / SHOW /
+DESCRIBE / WITH / EXPLAIN) and caps results at 1000 rows. The guard parses the
+statement rather than pattern-matching it, so it understands comments, string
+literals, quoted identifiers, and parentheses:
+
+- Stacked statements are refused (`select 1; drop table t`), while a semicolon
+  *inside a string literal* (`select 'a;b'`) is data and passes through.
+- A leading comment (`-- note`) does not hide the real first keyword.
+- A `WITH` clause must feed a `SELECT`, so `with x as (...) insert into ...`
+  is refused, and `EXPLAIN` is only allowed for read-only statements.
+
+**This guard is a usability guardrail, not a security boundary.** Any
+application-level SQL check can be worked around. The durable protection is a
+read-only Snowflake role — grant only `USAGE` and `SELECT`, then point
+`SNOWFLAKE_ROLE` at it so the database itself refuses writes.
+
+## Tests
+
+The guard has a regression suite covering destructive statements, stacked-
+statement injection, malformed literals, and the read-only SQL that must keep
+working:
+
+```bash
+.venv/bin/python -m pytest tests/ -q
+```
 
 ## Managed environments (production)
 
