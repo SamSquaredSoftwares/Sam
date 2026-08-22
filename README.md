@@ -66,7 +66,10 @@ environments.
 
 Once running:
 
-- Web UI / OpenAPI: `http://localhost:8080` (spec at `/openapi.json`)
+- API docs (Swagger UI): `http://localhost:8080/docs` (spec at `/openapi.json`).
+  The bundled web UI at `/` is absent from the PyPI wheel of
+  `sema4ai-action-server` 3.2.0 (`_static_contents` is not shipped), so `/`
+  returns an error; use `/docs` instead.
 - MCP endpoint: `http://localhost:8080/mcp`
 - Run an action:
 

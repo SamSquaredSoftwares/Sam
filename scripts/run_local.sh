@@ -16,6 +16,12 @@ PORT="${1:-8080}"
 VENV="$ROOT/.venv"
 STAGE="$ROOT/.devrun/sam-actions"
 
+# Virtualenv layout differs by platform: POSIX puts executables in bin/,
+# Windows (native CPython or uv) in Scripts/. Resolve after the venv exists.
+venv_bin() {
+    if [ -d "$VENV/Scripts" ]; then echo "$VENV/Scripts"; else echo "$VENV/bin"; fi
+}
+
 # 0. Load credentials from .env if present (see .env.example).
 if [ -f "$ROOT/.env" ]; then
     echo "Loading environment from $ROOT/.env"
@@ -26,7 +32,7 @@ if [ -f "$ROOT/.env" ]; then
 fi
 
 # 1. Ensure the virtualenv exists and has the dependencies.
-if [ ! -x "$VENV/bin/python" ]; then
+if [ ! -x "$(venv_bin)/python" ] && [ ! -x "$(venv_bin)/python.exe" ]; then
     echo "Creating virtualenv at $VENV ..."
     if command -v uv >/dev/null 2>&1; then
         uv venv --python 3.12 "$VENV"
@@ -34,13 +40,15 @@ if [ ! -x "$VENV/bin/python" ]; then
         python3.12 -m venv "$VENV"
     fi
 fi
+BIN="$(venv_bin)"
+PY="$BIN/python.exe"; [ -f "$PY" ] || PY="$BIN/python"
 
-if [ ! -x "$VENV/bin/action-server" ]; then
+if [ ! -x "$BIN/action-server" ] && [ ! -x "$BIN/action-server.exe" ]; then
     echo "Installing dependencies from requirements.txt ..."
     if command -v uv >/dev/null 2>&1; then
-        uv pip install --python "$VENV/bin/python" -r "$ROOT/requirements.txt"
+        uv pip install --python "$PY" -r "$ROOT/requirements.txt"
     else
-        "$VENV/bin/pip" install -r "$ROOT/requirements.txt"
+        "$BIN/pip" install -r "$ROOT/requirements.txt"
     fi
 fi
 
@@ -50,8 +58,9 @@ mkdir -p "$STAGE"
 cp "$ROOT/actions/"*.py "$STAGE/"
 
 # 3. Start the server.
+AS="$BIN/action-server.exe"; [ -f "$AS" ] || AS="$BIN/action-server"
 echo "Starting Sema4.ai Action Server on http://localhost:$PORT"
-exec "$VENV/bin/action-server" start \
+exec "$AS" start \
     --dir "$STAGE" \
     --datadir "$ROOT/.datadir" \
     --port "$PORT"
