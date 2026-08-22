@@ -1,22 +1,58 @@
-# Python
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-*.egg-info/
-.venv/
-venv/
+# Deny by default. This repo is rooted at the Windows user profile, so any
+# unlisted file - credentials, tokens, kube/docker/cloud config - stays out
+# of git. Add an explicit "!" line to track something new.
+*
 
-# Secrets
-.env
+# Explicitly tracked:
+!.gitignore
+!.gitattributes
+!README.md
+!requirements.txt
+!.env.example
 
-# Action Server
-.datadir/
-devdata/
-output/
-.devrun/
-*.zip
+# Previously-tracked ADB public key (harmless, kept for continuity):
+!.android/
+.android/*
+!.android/adbkey.pub
 
-# OS / editor
-.DS_Store
+# Project source directories. Un-exclude each directory first - git will not
+# descend into an excluded directory, so the "!dir/" line has to precede
+# "!dir/**".
+!actions/
+!actions/**
+!db/
+!db/**
+!docs/
+!docs/**
+!managed-agents/
+!managed-agents/**
+!scripts/
+!scripts/**
+!tests/
+!tests/**
+
+# ...but never the generated noise inside them. These come last so they win:
+# the last matching pattern decides.
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/*.egg-info/
+**/.venv/
+**/venv/
+**/node_modules/
+
+# Secrets stay out even inside allowlisted directories (.env.example above is
+# the only exception):
+**/.env
+
+# Action Server working directories:
+**/.datadir/
+**/devdata/
+**/output/
+**/.devrun/
+**/*.zip
+
+# OS / editor:
+**/.DS_Store
