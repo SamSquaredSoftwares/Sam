@@ -15,6 +15,7 @@ scripts/
   run_local.sh      Start the Action Server in unmanaged mode (no RCC needed)
 docs/
   AI_AGENT_BLUEPRINT.md  How to build an AI agent on top of these actions
+snowflake/          Read-only role DDL for the Snowflake actions
 db/                 Licensing schema, migrations, and SQL behavior tests
 managed-agents/     Claude Code managed subagents + cross-platform installer
 tests/              Python test suite
@@ -31,6 +32,9 @@ requirements.txt    Dependencies for the local virtualenv
 - [`managed-agents/README.md`](managed-agents/README.md) — the Claude Code
   managed subagents used to work *on* this repo, and how to install them.
   (Distinct from the agents the blueprint teaches you to build *with* this repo.)
+- [`snowflake/README.md`](snowflake/README.md) — the read-only Snowflake role
+  that backs `query_snowflake`: how to apply it, and the four things that
+  decide whether it actually protects you.
 - [`db/README.md`](db/README.md) — licensing schema, migrations, and how to run
   the database tests.
 
@@ -156,8 +160,20 @@ literals, quoted identifiers, and parentheses:
 
 **This guard is a usability guardrail, not a security boundary.** Any
 application-level SQL check can be worked around. The durable protection is a
-read-only Snowflake role — grant only `USAGE` and `SELECT`, then point
-`SNOWFLAKE_ROLE` at it so the database itself refuses writes.
+read-only Snowflake role, so the warehouse itself refuses writes:
+
+```bash
+python scripts/snowflake_readonly_role.py \
+  --role SAM_READONLY --user SAM_SERVICE \
+  --warehouse COMPUTE_WH --database ANALYTICS   # review the SQL
+python scripts/snowflake_readonly_role.py --execute
+echo 'SNOWFLAKE_ROLE=SAM_READONLY' >> .env
+python scripts/verify_snowflake_readonly.py     # prove writes are refused
+```
+
+See [`snowflake/README.md`](snowflake/README.md) — in particular the caveats
+about the service user holding no other role, and privileges inherited from
+`PUBLIC`, either of which will undo the protection.
 
 ## Tests
 
