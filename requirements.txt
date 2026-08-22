@@ -1,4 +1,8 @@
 anthropic>=0.121.0
+# agents/ call the Action Server over httpx. Declared explicitly because
+# anthropic 1.0+ depends on httpx2, not httpx -- without this line httpx only
+# arrives by accident, via snowflake-connector-python.
+httpx>=0.28
 sema4ai-actions>=1.6.6
 sema4ai-action-server>=3.2.0
 snowflake-connector-python>=4.7.2
