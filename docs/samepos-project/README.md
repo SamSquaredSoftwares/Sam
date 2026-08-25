@@ -50,15 +50,16 @@ Ten files. Their state as of this commit:
 | 3 | `ARCHITECTURE.md` | DRAFT | Read once, correct anything wrong, commit |
 | 4 | `SYNC_ENGINE.md` | PLACEHOLDER | Upload the real `SYNC_ENGINE.py` from the product repo instead |
 | 5 | `ENV_TEMPLATE.md` | DRAFT | Diff against your real `.env` files, add anything missing |
-| 6 | `INSTALLER_RUNBOOK.md` | DRAFT from this repo | Add the ten phase detail and field notes from the installer README |
+| 6 | `INSTALLER_RUNBOOK.md` | SKELETON from this repo | Add the ten phase detail and field notes from the installer README |
 | 7 | `BILLING.prisma` | DRAFT | Replace with the real Prisma schema file from the billing repo |
 | 8 | `TEST_PLAN.md` | DRAFT | Trim to what you will actually run |
 | 9 | `BOOTH_LIQUOR_NOTES.md` | TEMPLATE | Write 10 bullets from memory. Takes 10 minutes |
 | 10 | `DECISIONS.md` | SEEDED from this repo | Add one line per decision as you make them |
 
 DRAFT means Claude wrote it from the setup pack plus this repo's real
-code and docs. Every drafted file marks which claims are verified
-against this repo and which need your confirmation.
+code and docs. SKELETON means the frame is verified but key sections are
+left as numbered TODO slots. Every drafted file marks which claims are
+verified against this repo and which need your confirmation.
 
 **Rule for every upload: placeholders for secrets. Always. A knowledge
 file is forever.**
@@ -71,7 +72,7 @@ Three ways. Pick one.
 |--------|-----------|------------------|-----------|
 | Lean | Custom instructions plus files 1, 2, 5 | 30 minutes | You want value today |
 | Standard | Files 1 to 7, plus a weekly decisions update | 2 hours | You are building most days |
-| Full | All 10 files plus a daily bug test prompt on schedule | Half a day | You are onboarding venue two |
+| Full | All 10 files plus a daily bug test prompt on schedule (write that prompt when you get here; starter prompt 1 is the template) | Half a day | You are onboarding venue two |
 
 Pick: Lean today, Standard by Friday. A half-stocked pantry you cook
 from beats a perfect one you never open. File 2 alone (the schema)

@@ -45,6 +45,10 @@ Format: numbered checklist, then a decision tree. One page max.
 
 ## 4. Billing that survives a webhook storm
 
+Before running: upload the webhook handler file from the billing repo
+(for example `app/api/webhooks/stripe/route.ts`), or paste it into the
+chat. It is not one of the ten knowledge files.
+
 ```
 Role: lead engineer on SAMePOS.
 Context: Stripe webhooks must never double charge or double provision.
