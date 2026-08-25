@@ -1,0 +1,253 @@
+// BILLING.prisma - SAMePOS billing schema (Stripe + Prisma + Supabase)
+// STATUS: DRAFT - REPLACE this whole file with the real schema.prisma from the
+// billing repo before uploading it to the Claude Project. The real file lives
+// in the billing app (Next.js App Router), not in the "Sam" repo this draft
+// was written from. This draft encodes the pack's non-negotiable constraints
+// so Claude has something better than nothing until the real file arrives.
+//
+// HOW TO FINISH THIS FILE (do these in order):
+// 1. Open the billing repo. Copy prisma/schema.prisma over this file.
+// 2. Check the real file against the rules below. Flag any rule it breaks.
+// 3. Delete every [draft] marker that the real file resolves.
+// 4. Confirm the real file has NO connection string with credentials in it.
+//    url must stay env("DATABASE_URL"). A knowledge file is forever.
+//
+// PROVENANCE LABELS USED IN THIS FILE:
+//   [pack]  = stated by Mr LSG in the SAMePOS setup pack (authoritative intent)
+//   [repo]  = verified in the Sam repo (licensing core, deploy workflow)
+//   [draft] = guessed by the drafter; the real billing repo file wins
+//
+// NON-NEGOTIABLE RULES THIS SCHEMA MUST OBEY (from the pack):
+// - Money is never a float. Store cents as Int. Display ZAR with 2 decimals.
+//   [pack rule 3]
+// - VAT is 15 percent and INCLUSIVE by default. Store the split (net + vat =
+//   total), do not recompute it later from a rate that might change. [pack rule 4]
+// - The webhook handler must be idempotent. WebhookEvent with a unique Stripe
+//   event id plus a processed flag is the mechanism. [pack]
+// - Sync idempotency: the unique constraint on (terminal_id, sale_ref) lives in
+//   the POS sales schema (Supabase / local PG), NOT here. It is load bearing.
+//   Nothing in billing may assume a sale row can appear twice. [pack rule 2]
+// - Customer fields are POPIA scoped. Collect the minimum. Never log personal
+//   data (names, emails, phones) in plain text. [pack rule 5]
+// - Cloud layer is Supabase Postgres; billing stack is Stripe + Prisma +
+//   Supabase on Next.js App Router. [pack]
+//
+// KNOWN TENSIONS FOR MR LSG TO RECONCILE (both sides kept on purpose):
+// - [pack] says the billing app is Next.js App Router on Supabase. [repo] shows
+//   a GitHub Actions workflow (.github/workflows/main_samepos.yml) configured
+//   to build an ASP.NET Core app named "SAMePOS" and deploy it to Azure App
+//   Service (the Sam repo holds no .NET source, so it cannot succeed as is).
+//   Two cloud apps, or one replaced the other? Unresolved. Confirm which app
+//   this Prisma schema serves before trusting any endpoint claim.
+// - [repo] the node licensing core (db/schema/licensing.schema.sql) binds
+//   Ed25519 "SPOS1." licence keys to a machine-bound install_code on the node's
+//   embedded PostgreSQL, activated via POST /api/licence/activate on the node's
+//   FastAPI app. If billing provisions or renews those licences after a Stripe
+//   payment, that flow is NOT modeled here. The installCode field on
+//   POSTerminal below is a [draft] bridge, not a verified fact.
+// - [draft] this schema has no separate Venue model; Customer stands in for
+//   the venue/business account (first live venue: Booth Liquor [pack]). If the
+//   real billing repo has a Venue model, its shape wins.
+//
+// TIMEZONE: business timezone is Africa/Johannesburg [pack]. Store all
+// DateTime values as UTC (Prisma default); convert at the display edge only.
+
+// ---------------------------------------------------------------------------
+// datasource / generator
+// ---------------------------------------------------------------------------
+
+datasource db {
+  provider = "postgresql"
+  // Supabase Postgres [pack]. Placeholder env var only - never a real
+  // connection string. Supabase project ref: kpjqfsbjksnmxogmmcrb [pack].
+  url      = env("DATABASE_URL")
+  // [draft] Supabase setups that connect through the pooler usually also need
+  // a direct connection for migrations. Uncomment if the real repo has it:
+  // directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+// [draft] - values guessed from standard Stripe lifecycle states.
+// The real repo may store Stripe's raw status string instead of an enum.
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  INCOMPLETE
+}
+
+// [draft] - values guessed from standard Stripe invoice states.
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+// [draft] - terminal lifecycle guessed. The node side has its own licence
+// states (trial / extended_trial / licensed / grace / expired) in the
+// licensing core [repo]; this enum is the BILLING view, not the node's truth.
+enum TerminalStatus {
+  PROVISIONED
+  ACTIVE
+  SUSPENDED
+  RETIRED
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+// [draft] - field names guessed, replace with the real file.
+// Customer = the paying business (the venue account), e.g. Booth Liquor [pack].
+// POPIA [pack rule 5]: this is personal information under South African law.
+// Collect the minimum. Never log these fields in plain text. Never copy them
+// into webhook payloads, error messages, or analytics.
+model Customer {
+  id               String   @id @default(cuid())
+  // [draft] Stripe customer id, e.g. "cus_...". Unique so one Stripe customer
+  // maps to exactly one row.
+  stripeCustomerId String?  @unique
+  businessName     String
+  // Minimum contact set [pack rule 5]. No ID numbers, no birth dates, no
+  // physical addresses unless invoicing law forces it.
+  contactName      String?
+  email            String   @unique
+  phone            String?
+  // Business VAT registration number (company data, still handle with care).
+  vatNumber        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  subscriptions Subscription[]
+  invoices      Invoice[]
+  terminals     POSTerminal[]
+}
+
+// [draft] - field names guessed, replace with the real file.
+// One Stripe subscription per venue account (or per plan tier).
+model Subscription {
+  id                   String             @id @default(cuid())
+  customerId           String
+  customer             Customer           @relation(fields: [customerId], references: [id])
+  // [draft] Stripe ids. Unique subscription id keeps webhook upserts idempotent.
+  stripeSubscriptionId String             @unique
+  stripePriceId        String?
+  planName             String?
+  status               SubscriptionStatus @default(TRIALING)
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  canceledAt           DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  invoices Invoice[]
+
+  @@index([customerId])
+}
+
+// [draft] - field names guessed, replace with the real file.
+// MONEY RULES [pack rules 3 and 4]:
+// - All money fields are Int cents. Never Float, never Decimal-as-float.
+// - Currency is ZAR. Display with 2 decimals at the edge only.
+// - VAT is 15 percent INCLUSIVE. totalCents is the VAT-inclusive amount the
+//   customer pays. Store the split so history survives a future rate change:
+//       vatCents = round(totalCents * 15 / 115)
+//       netCents = totalCents - vatCents
+//   Invariant: netCents + vatCents == totalCents. Enforce in code and, if the
+//   real schema allows it, with a DB CHECK constraint.
+model Invoice {
+  id              String        @id @default(cuid())
+  customerId      String
+  customer        Customer      @relation(fields: [customerId], references: [id])
+  subscriptionId  String?
+  subscription    Subscription? @relation(fields: [subscriptionId], references: [id])
+  // [draft] Stripe invoice id, e.g. "in_...". Unique for idempotent upserts.
+  stripeInvoiceId String?       @unique
+  status          InvoiceStatus @default(OPEN)
+  // VAT-inclusive total, in cents [pack rule 3].
+  totalCents      Int
+  // The stored VAT split [pack rule 4].
+  netCents        Int
+  vatCents        Int
+  // Rate captured at issue time so old invoices stay correct if VAT changes.
+  vatRatePercent  Int           @default(15)
+  currency        String        @default("zar")
+  issuedAt        DateTime      @default(now())
+  dueAt           DateTime?
+  paidAt          DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([customerId])
+  @@index([subscriptionId])
+}
+
+// [draft] - field names guessed, replace with the real file.
+// The billing-side record of a terminal at a venue. The venue link is the
+// customer relation [pack]. NOTE CAREFULLY [pack rule 2]: the sales tables in
+// the POS schema (Supabase and local PG 16 on port 5433) carry the unique
+// constraint on (terminal_id, sale_ref). That constraint is load bearing for
+// re-sync safety. This model must reference the SAME terminal identifier the
+// POS schema uses, and nothing here may weaken or duplicate that constraint.
+model POSTerminal {
+  id          String         @id @default(cuid())
+  // The terminal identifier as the POS sales schema knows it (terminal_id).
+  // [draft] exact name and format unverified against the real POS schema dump.
+  terminalId  String         @unique
+  customerId  String
+  customer    Customer       @relation(fields: [customerId], references: [id])
+  // [draft] human label, e.g. "Booth Liquor - front bar".
+  label       String?
+  // [repo]-informed bridge, [draft] here: the node licensing core binds
+  // licences to a machine-bound install_code (db/schema/licensing.schema.sql).
+  // If billing tracks which physical node a paid terminal maps to, this is
+  // where the install code would live. Confirm against the real billing repo.
+  installCode String?        @unique
+  status      TerminalStatus @default(PROVISIONED)
+  activatedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([customerId])
+}
+
+// [draft] - field names guessed, replace with the real file.
+// IDEMPOTENCY MECHANISM [pack]: Stripe retries webhooks and can deliver the
+// same event twice or out of order. The handler must:
+// 1. Verify the Stripe signature.
+// 2. INSERT this row keyed on stripeEventId. On unique-violation: stop.
+//    The event was already handled or is being handled. Return 200.
+// 3. Do the work (provision, mark invoice paid, etc.).
+// 4. Set processed = true and processedAt inside the same transaction as the
+//    work, so a crash between work and flag cannot double-apply on retry.
+// Never double charge. Never double provision.
+// POPIA note [pack rule 5]: payload may contain customer personal data.
+// Do not log it in plain text; redact before writing to any log sink.
+model WebhookEvent {
+  id            String    @id @default(cuid())
+  // Stripe event id, e.g. "evt_...". THE unique key that makes retries safe.
+  stripeEventId String    @unique
+  // Stripe event type, e.g. "invoice.paid", "customer.subscription.updated".
+  eventType     String
+  processed     Boolean   @default(false)
+  processedAt   DateTime?
+  // [draft] raw event payload for replay and debugging. See POPIA note above.
+  payload       Json?
+  // [draft] last handler error, for dead-letter inspection.
+  error         String?
+  receivedAt    DateTime  @default(now())
+
+  @@index([eventType, processed])
+}

@@ -15,6 +15,7 @@ scripts/
   run_local.sh      Start the Action Server in unmanaged mode (no RCC needed)
 docs/
   AI_AGENT_BLUEPRINT.md  How to build an AI agent on top of these actions
+  samepos-project/  The SAMePOS Claude Project setup pack (instructions + knowledge files)
 snowflake/          Read-only role DDL for the Snowflake actions
 db/                 Licensing schema, migrations, and SQL behavior tests
 managed-agents/     Claude Code managed subagents + cross-platform installer
@@ -29,6 +30,10 @@ requirements.txt    Dependencies for the local virtualenv
   choosing among the four build approaches, designing the tool surface from
   these actions, a runnable Snowflake analyst agent, and production hardening
   (secrets, error handling, prompt caching, context management, evals).
+- [`docs/samepos-project/README.md`](docs/samepos-project/README.md) — the
+  SAMePOS Claude Project setup pack: the custom instructions, the ten knowledge
+  files (drafted from this repo where possible), and the starter prompts,
+  version-controlled so they can never be lost in chat threads again.
 - [`managed-agents/README.md`](managed-agents/README.md) — the Claude Code
   managed subagents used to work *on* this repo, and how to install them.
   (Distinct from the agents the blueprint teaches you to build *with* this repo.)
