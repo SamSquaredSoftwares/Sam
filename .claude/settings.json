@@ -1,0 +1,19 @@
+{
+  "autoCompactEnabled": true,
+  "precomputeCompactionEnabled": true,
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.session_id // \"\"' | { read -r sid; trash=\"$HOME/.claude/stale-tasks/$(date +%s)\"; for d in \"$HOME/.claude/todos\" \"$HOME/.claude/tasks\"; do [ -d \"$d\" ] || continue; if find \"$d\" -mindepth 1 -maxdepth 1 ! -name \"*${sid:-no-session}*\" -mmin +5 | grep -q .; then mkdir -p \"$trash\"; find \"$d\" -mindepth 1 -maxdepth 1 ! -name \"*${sid:-no-session}*\" -mmin +5 -exec mv -t \"$trash/\" {} +; fi; done; } 2>/dev/null || true",
+            "timeout": 15,
+            "statusMessage": "Moving tasks from previous sessions to ~/.claude/stale-tasks"
+          }
+        ]
+      }
+    ]
+  }
+}
