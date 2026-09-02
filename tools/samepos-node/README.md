@@ -12,6 +12,7 @@ not restate it; it provides the mechanics the runbook assumes you have.
 | `driver.py` | Credential proof + access diagnosis, SMB transfer, detached process launch, PID polling, log fetch. |
 | `phase0_recon.ps1` | **Read-only** recon on the target: answers every prerequisite the runbook says to confirm rather than assume. |
 | `tests/test_driver.py` | Unit tests for the driver's decisions (transport stubbed). |
+| `tests/test_smb_integration.py` | End-to-end tests against a **real** impacket SMB server on loopback. |
 
 ## Why a driver rather than ad-hoc commands
 
@@ -124,12 +125,28 @@ Two ordering rules from the runbook that the driver cannot enforce for you:
 ./.venv/bin/python -m pytest tests/ -q
 ```
 
-`.github/workflows/ci.yml` runs the same suite on every push and pull request,
-plus a parse check over every `.ps1` in the repo. The parse check matters because
-phase scripts are shipped to a live trading venue and run there, so a syntax
-error otherwise costs a round trip against a real POS box.
+55 tests, in two layers.
 
-44 tests, transport stubbed — they verify the decisions (error classification,
-command construction and quoting, the access verdict, CLI wiring), not impacket.
-The PowerShell is separately parse-checked with
-`[System.Management.Automation.Language.Parser]::ParseFile`.
+**Unit (45), transport stubbed** — the decisions: error classification, command
+construction and quoting, the access verdict, CLI wiring.
+
+**Integration (10), real protocol** — stands up an actual impacket SMB server on
+a loopback port and drives the real path: NTLM auth, share enumeration, nested
+directory creation, and byte-exact transfer both ways. It asserts the two
+diagnoses the install hangs off against a server that really rejects a bad NTLM
+response: a wrong password surfaces as `STATUS_LOGON_FAILURE` → `bad_credentials`,
+and a closed port as → `unreachable`. Confusing those two is what sends an
+operator to re-check a password that was never wrong.
+
+**Not covered, deliberately:** the CIM/DCOM and WinRM execution channels, and
+everything in `phase0_recon.ps1` that reads Windows state (WMI, registry, SQL
+Server, ODBC). Those need a real Windows host, and a fake that passed would be
+worse than no test. The recon script is instead parse-checked, and verified to
+degrade cleanly when every Windows-specific probe fails.
+
+`.github/workflows/ci.yml` runs both layers on every push and pull request, plus
+a parse check over every `.ps1` in the repo — phase scripts are shipped to a live
+trading venue and run there, so a syntax error otherwise costs a round trip
+against a real POS box. The integration tests skip themselves when the server
+cannot bind (so a developer machine stays usable), and CI **fails on a skip**:
+otherwise it would go green while testing nothing.

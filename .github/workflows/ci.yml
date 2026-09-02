@@ -25,6 +25,20 @@ jobs:
       - name: Run driver tests
         run: pytest tools/samepos-node/tests -q
 
+      # The SMB tests stand up a real impacket server on a loopback port and
+      # drive the actual wire protocol. They skip themselves if the server
+      # cannot bind, which keeps a developer's machine usable but would turn CI
+      # green while testing nothing -- so here a skip is a failure.
+      - name: SMB integration tests must actually run, not skip
+        run: |
+          set -o pipefail
+          pytest tools/samepos-node/tests/test_smb_integration.py -q -rs \
+            | tee /tmp/smb-integration.log
+          if grep -qiE '[0-9]+ skipped|SKIPPED' /tmp/smb-integration.log; then
+            echo "::error::SMB integration tests skipped - the real-protocol path was not exercised"
+            exit 1
+          fi
+
       # Every phase script is shipped to a live trading venue and run there, so a
       # syntax error costs a round trip against a real POS box. pwsh is
       # preinstalled on ubuntu runners; this parses without executing.

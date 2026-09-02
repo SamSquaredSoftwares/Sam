@@ -270,6 +270,24 @@ def test_verdict_token_filtering_prescribes_the_interactive_bootstrap() -> None:
     assert "enable-remoting.bat" in verdict["next_step"]
 
 
+def test_verdict_requires_a_c_dollar_denial_before_blaming_token_filtering() -> None:
+    """Authenticating over SMB is not on its own evidence of token filtering.
+
+    A host that authenticates, has no C$ and no execution channel looks
+    identical from the outside -- but sending the operator to set
+    LocalAccountTokenFilterPolicy there fixes a policy that was never the
+    problem. Only an actual STATUS_ACCESS_DENIED on C$ justifies that advice.
+    """
+    verdict = driver._verdict(
+        _report(smb={"authenticated": True, "admin_share_c": driver.ACCESS_ERROR})
+    )
+    assert verdict["headless_install_possible"] is False
+    assert "token-filtering signature" in verdict["reason"]
+    assert "not the" in verdict["reason"]
+    assert "enable-remoting.bat" not in verdict["next_step"]
+    assert "WinRM" in verdict["next_step"] and "135" in verdict["next_step"]
+
+
 def test_verdict_cim_available_means_go() -> None:
     verdict = driver._verdict(_report(smb={"authenticated": True}, cim={"usable": True}))
     assert verdict["headless_install_possible"] is True

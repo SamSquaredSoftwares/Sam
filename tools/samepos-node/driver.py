@@ -553,12 +553,30 @@ def _verdict(report: dict[str, Any]) -> dict[str, Any]:
             "next_step": "proceed to phase 0 recon",
         }
     if smb_auth:
+        # Only call it token filtering if C$ actually reported an access *denial*.
+        # A C$ that is absent or errors for another reason (a non-Windows SMB host,
+        # a renamed admin share) authenticates fine and has no execution channel
+        # either -- but prescribing the UAC bootstrap there sends the operator to
+        # fix a policy that was never the problem.
+        if report["smb"].get("admin_share_c") == ACCESS_TOKEN_FILTERED:
+            return {
+                "headless_install_possible": False,
+                "reason": "credentials authenticate over SMB and C$ returns "
+                "STATUS_ACCESS_DENIED with no execution channel available - the UAC "
+                "remote-token filtering signature from the runbook",
+                "next_step": "run scripts/enable-remoting.bat once interactively (RDP/AnyDesk) "
+                "to set LocalAccountTokenFilterPolicy=1 and enable WinRM, then re-probe",
+            }
         return {
             "headless_install_possible": False,
-            "reason": "credentials authenticate over SMB but no execution channel is "
-            "available - the UAC remote-token filtering signature from the runbook",
-            "next_step": "run scripts/enable-remoting.bat once interactively (RDP/AnyDesk) "
-            "to set LocalAccountTokenFilterPolicy=1 and enable WinRM, then re-probe",
+            "reason": "credentials authenticate over SMB, but no execution channel is "
+            "available AND C$ did not report an access denial "
+            f"(C$ reported: {report['smb'].get('admin_share_c')}) - so this is not the "
+            "classic token-filtering signature",
+            "next_step": "check that WinRM (5985/5986) and DCOM/RPC (135 plus its ephemeral "
+            "range) are actually reachable from here - on an internet-facing target only 445 "
+            "is often forwarded. Confirm the host is the Windows venue box and not another "
+            "SMB service before running the UAC bootstrap",
         }
     return {
         "headless_install_possible": False,
