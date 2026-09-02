@@ -16,6 +16,8 @@ scripts/
   run_local.sh      Start the Action Server in unmanaged mode (no RCC needed)
 docs/
   AI_AGENT_BLUEPRINT.md  How to build an AI agent on top of these actions
+  samepos-project/  The SAMePOS Claude Project setup pack (instructions + knowledge files)
+snowflake/          Read-only role DDL for the Snowflake actions
 db/                 Licensing schema, migrations, and SQL behavior tests
 managed-agents/     Claude Code managed subagents + cross-platform installer
 tests/              Python test suite
@@ -29,9 +31,16 @@ requirements.txt    Dependencies for the local virtualenv
   choosing among the four build approaches, designing the tool surface from
   these actions, a runnable Snowflake analyst agent, and production hardening
   (secrets, error handling, prompt caching, context management, evals).
+- [`docs/samepos-project/README.md`](docs/samepos-project/README.md) — the
+  SAMePOS Claude Project setup pack: the custom instructions, the ten knowledge
+  files (drafted from this repo where possible), and the starter prompts,
+  version-controlled so they can never be lost in chat threads again.
 - [`managed-agents/README.md`](managed-agents/README.md) — the Claude Code
   managed subagents used to work *on* this repo, and how to install them.
   (Distinct from the agents the blueprint teaches you to build *with* this repo.)
+- [`snowflake/README.md`](snowflake/README.md) — the read-only Snowflake role
+  that backs `query_snowflake`: how to apply it, and the four things that
+  decide whether it actually protects you.
 - [`db/README.md`](db/README.md) — licensing schema, migrations, and how to run
   the database tests.
 
@@ -142,8 +151,45 @@ curl -X POST http://localhost:8080/api/actions/sam-actions/query-snowflake/run \
   -d '{"sql": "select current_timestamp()", "max_rows": 10}'
 ```
 
-`query_snowflake` only accepts a single read-only statement
-(SELECT/SHOW/DESCRIBE/WITH/EXPLAIN) and caps results at 1000 rows.
+### Read-only guard
+
+`query_snowflake` accepts a single read-only statement (SELECT / SHOW /
+DESCRIBE / WITH / EXPLAIN) and caps results at 1000 rows. The guard parses the
+statement rather than pattern-matching it, so it understands comments, string
+literals, quoted identifiers, and parentheses:
+
+- Stacked statements are refused (`select 1; drop table t`), while a semicolon
+  *inside a string literal* (`select 'a;b'`) is data and passes through.
+- A leading comment (`-- note`) does not hide the real first keyword.
+- A `WITH` clause must feed a `SELECT`, so `with x as (...) insert into ...`
+  is refused, and `EXPLAIN` is only allowed for read-only statements.
+
+**This guard is a usability guardrail, not a security boundary.** Any
+application-level SQL check can be worked around. The durable protection is a
+read-only Snowflake role, so the warehouse itself refuses writes:
+
+```bash
+python scripts/snowflake_readonly_role.py \
+  --role SAM_READONLY --user SAM_SERVICE \
+  --warehouse COMPUTE_WH --database ANALYTICS   # review the SQL
+python scripts/snowflake_readonly_role.py --execute
+echo 'SNOWFLAKE_ROLE=SAM_READONLY' >> .env
+python scripts/verify_snowflake_readonly.py     # prove writes are refused
+```
+
+See [`snowflake/README.md`](snowflake/README.md) — in particular the caveats
+about the service user holding no other role, and privileges inherited from
+`PUBLIC`, either of which will undo the protection.
+
+## Tests
+
+The guard has a regression suite covering destructive statements, stacked-
+statement injection, malformed literals, and the read-only SQL that must keep
+working:
+
+```bash
+.venv/bin/python -m pytest tests/ -q
+```
 
 ## TLS trust (inspecting proxies and private CAs)
 
