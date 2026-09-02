@@ -183,13 +183,23 @@ about the service user holding no other role, and privileges inherited from
 
 ## Tests
 
-The guard has a regression suite covering destructive statements, stacked-
-statement injection, malformed literals, and the read-only SQL that must keep
-working:
-
 ```bash
 .venv/bin/python -m pytest tests/ -q
 ```
+
+`pytest` is in `requirements.txt`. Use it rather than
+`python -m unittest discover -s tests`, which collects only the
+`unittest`-style tests and silently ignores the function-style ones, so it
+reports a pass having run a fraction of the suite.
+
+The suite covers the SQL guard's regressions (destructive statements,
+stacked-statement injection, malformed literals, and the read-only SQL that
+must keep working) as well as TLS trust resolution and certificate handling.
+
+The certificate tests need `cryptography`, which arrives transitively with
+`requirements.txt`; on a minimal install they skip. Set
+`SAM_TESTS_REQUIRE_TLS=1` to turn those skips into failures, so CI cannot report
+green while the checks that matter most are quietly not running.
 
 ## TLS trust (inspecting proxies and private CAs)
 
@@ -226,22 +236,6 @@ holding only a CRL - is a hard error naming the offending variable, rather than 
 silent fallback to the default trust store followed by a confusing handshake
 error. Verification itself cannot be turned off: the fix for an interception
 proxy is to trust its CA, never to stop checking.
-
-## Tests
-
-```bash
-pip install pytest      # not in requirements.txt; the suite needs it
-pytest tests
-```
-
-Use `pytest`. `python -m unittest discover -s tests` also works but collects
-only the `unittest`-style tests and silently ignores the function-style ones,
-so it reports a pass having run a fraction of the suite.
-
-The certificate tests need `cryptography`, which arrives transitively with
-`requirements.txt`; on a minimal install they skip. Set
-`SAM_TESTS_REQUIRE_TLS=1` to turn those skips into failures, so CI cannot report
-green while the checks that matter most are quietly not running.
 
 ## Managed environments (production)
 
