@@ -43,7 +43,7 @@ try:
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
     HAVE_CRYPTOGRAPHY = True
 except BaseException:  # pragma: no cover - minimal installs only
@@ -90,6 +90,27 @@ def _mint_ca(tmp: Path, name: str) -> tuple[Path, x509.Certificate, ec.EllipticC
         .not_valid_before(now - timedelta(days=1))
         .not_valid_after(now + timedelta(days=365))
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        # RFC 5280 s4.2.1.2: a CA certificate must carry a Subject Key
+        # Identifier, which the leaf's Authority Key Identifier then points at.
+        # Python 3.13's create_default_context() enables VERIFY_X509_STRICT, and
+        # OpenSSL's strict chain check rejects a chain missing these with
+        # "Missing Authority Key Identifier". The production code is right to be
+        # strict; the fixture has to mint certificates a real CA would.
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
         .sign(key, hashes.SHA256())
     )
     path = tmp / f"{name}.pem"
@@ -111,6 +132,32 @@ def _mint_leaf(
         .not_valid_before(now - timedelta(days=1))
         .not_valid_after(now + timedelta(days=30))
         .add_extension(x509.SubjectAlternativeName([x509.DNSName(hostname)]), critical=False)
+        # Authority Key Identifier derived from the issuing CA's Subject Key
+        # Identifier: the link VERIFY_X509_STRICT insists on (see _mint_ca).
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(
+                ca_cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value
+            ),
+            critical=False,
+        )
+        # An EC leaf signs; it does not encipher keys. Declaring usage precisely
+        # is what a real server certificate does, and strict mode checks it is
+        # consistent with how the certificate is then used.
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .sign(ca_key, hashes.SHA256())
     )
     cert_path = tmp / f"{hostname}-cert.pem"
