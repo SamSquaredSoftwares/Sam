@@ -95,9 +95,10 @@ class TestActionWiring(unittest.TestCase):
 class TestAnthropicTimeoutPreserved(unittest.TestCase):
     """The trust override must not shorten the SDK's request timeout.
 
-    A bare `httpx.Client` carries a 5s timeout, against the SDK's 600s. The SDK
-    only substitutes its own when the supplied client's timeout is still httpx's
-    default, so setting one here would silently truncate long generations.
+    A bare HTTP client carries a 5s timeout, against the SDK's 600s. The trust
+    override hands the SDK its own `DefaultHttpxClient`, which carries the SDK
+    timeout; this pins that down so a future change to a bare client (or one
+    that sets a timeout) cannot silently truncate long generations.
     """
 
     def test_effective_timeout_matches_the_sdk_default(self) -> None:

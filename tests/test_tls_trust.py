@@ -381,9 +381,9 @@ class TestAnthropicClient(TrustTestCase):
 
     def test_builds_a_client_for_a_valid_bundle(self) -> None:
         try:
-            import httpx  # noqa: F401
+            import anthropic  # noqa: F401
         except ImportError:
-            self.skipTest("httpx is not installed")
+            self.skipTest("anthropic is not installed")
         client = anthropic_http_client(self.env(SAM_CA_BUNDLE=str(self.a_pem())))
         self.assertIsNotNone(client)
         client.close()
