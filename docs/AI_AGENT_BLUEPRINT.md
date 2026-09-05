@@ -148,8 +148,16 @@ Prerequisites:
 # ANTHROPIC_API_KEY must be set in the agent's environment
 ```
 
-Save as `agents/snowflake_analyst.py` (the `anthropic` package is already in
-`requirements.txt`, and `httpx` ships with it — no new dependencies):
+This agent ships in the repo at
+**[`agents/snowflake_analyst.py`](../agents/snowflake_analyst.py)**, with tests
+in `tests/test_snowflake_analyst.py`. The `anthropic` package is already in
+`requirements.txt` and `httpx` ships with it, so there are no new dependencies.
+
+The version below is trimmed for reading; see the file for the production
+details it leaves out (CLI flags, typed error handling, usage accounting, and
+discovering the action package name rather than hardcoding it — the Action
+Server derives that route segment from the directory it serves, so
+`sam-actions` is right for `run_local.sh` but not universally).
 
 ```python
 """A Snowflake analyst agent built on the Sam Action Server.
@@ -257,7 +265,9 @@ if __name__ == "__main__":
 Run it:
 
 ```bash
-python agents/snowflake_analyst.py "Which 5 customers generated the most revenue last quarter?"
+./scripts/run_local.sh &                  # tool layer first
+export ANTHROPIC_API_KEY=sk-ant-...
+python -m agents.snowflake_analyst "Which 5 customers generated the most revenue last quarter?"
 ```
 
 What the tool runner does for you: it sends the request, executes your tool
@@ -486,6 +496,7 @@ over-triggering on current models.
 | `actions/package.yaml` | Tool-layer dependencies for the managed (RCC) environment |
 | `scripts/run_local.sh` | Starts the tool layer locally (OpenAPI + MCP on :8080) |
 | `.env` | Local credentials for the tool layer (gitignored) |
-| `agents/` (this blueprint's Step 3) | The brain: loop, system prompt, tool wrappers |
-| `http://localhost:8080/openapi.json` | Tool schemas, HTTP flavor |
+| `agents/snowflake_analyst.py` | The brain: loop, system prompt, tool wrappers |
+| `tests/test_snowflake_analyst.py` | Its tests — no API key or warehouse needed |
+| `http://localhost:8080/openapi.json` | Tool schemas, HTTP flavor (and the action package name) |
 | `http://localhost:8080/mcp` | Tool schemas, MCP flavor — for MCP-native hosts |

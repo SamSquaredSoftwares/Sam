@@ -1,0 +1,48 @@
+-- SCHEMA.sql
+-- STATUS: PLACEHOLDER. Replace this file with the real schema dump.
+--
+-- This is knowledge file #2 of the SAMePOS Claude Project pack.
+-- It stops Claude guessing table and column names, which is the
+-- biggest source of wrong code. Do not upload this placeholder to
+-- the Claude Project. Upload the real dump under this same name.
+--
+-- HOW TO PRODUCE IT
+--
+-- Blocker found on 25 Aug 2026: the SAMePOS Supabase project
+-- (ref kpjqfsbjksnmxogmmcrb, eu-west-1, Postgres 17) is PAUSED
+-- (status INACTIVE). A paused project refuses connections, so the
+-- dump cannot run until you restore it.
+--
+-- 1. Restore the project: Supabase dashboard -> SAMePOS -> Restore.
+--    Restoring is free on the free tier. Pause it again afterwards
+--    if you paused it on purpose.
+--
+-- 2. Dump the cloud schema (no data, no secrets):
+--
+--    pg_dump --schema-only --no-owner --no-privileges \
+--      -h db.kpjqfsbjksnmxogmmcrb.supabase.co -p 5432 -U postgres \
+--      > SCHEMA.sql
+--
+--    You will be prompted for the database password. Never paste
+--    the password into any file.
+--
+-- 3. Also dump the LOCAL node schema (embedded PostgreSQL on port
+--    5433). The local and cloud schemas are not guaranteed
+--    identical, and sync bugs live in the difference:
+--
+--    pg_dump --schema-only --no-owner --no-privileges \
+--      -h localhost -p 5433 -U postgres -d <node_db> \
+--      > SCHEMA_LOCAL.sql
+--
+-- 4. Skim the output before uploading. A schema-only dump contains
+--    no row data, but check for comments or defaults that embed
+--    anything sensitive.
+--
+-- WHAT ALREADY EXISTS IN THIS REPO
+--
+-- The licensing slice of the node schema is real and lives at
+-- db/schema/licensing.schema.sql (tables licence_config,
+-- licence_node, licence_trust_key, licence, licence_audit, plus
+-- the licence_status view and functions). A copy of the DDL is
+-- worth appending to the dump if migration 024 has not been
+-- applied to the node you dump from.
