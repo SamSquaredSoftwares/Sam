@@ -25,6 +25,13 @@ db/tests/run_db_tests.sh
 # Validate the managed subagent definitions (also covered by pytest)
 python3 managed-agents/scripts/validate_agents.py
 
+# Read-only Snowflake role. Printing is the default because these are
+# privilege changes; --execute needs admin credentials, and the verifier
+# exits non-zero if writes are not actually refused (so it can gate a deploy).
+python scripts/snowflake_readonly_role.py --role SAM_READONLY --database ANALYTICS
+python scripts/snowflake_readonly_role.py --execute
+python scripts/verify_snowflake_readonly.py
+
 # Run the example agent (server must be up; needs ANTHROPIC_API_KEY)
 python -m agents.snowflake_analyst "Which 5 customers spent the most?"
 ```
@@ -86,6 +93,33 @@ connector failed at import. Note also that the agent uses the SDK's *beta* tool
 runner (`anthropic.beta_tool`, `client.beta.messages.tool_runner`), which is
 verified against 1.0.0 but is not a stable API surface.
 
+**Known failure from that same split:** `tls_trust.anthropic_http_client()`
+builds an `httpx.Client`, but `anthropic` 1.0 is built on `httpx2` and rejects
+it with a `TypeError`, so passing a custom CA bundle down the Anthropic path
+does not currently work. `tests/test_actions_trust.py::TestAnthropicTimeoutPreserved::test_effective_timeout_matches_the_sdk_default`
+fails on `main` because of it. Everything else in the suite passes; if you see
+exactly that one failure, it is pre-existing, not something you broke.
+
+### Outbound TLS: two clients that disagree about CA bundles
+
+`actions/tls_trust.py` exists because the package's two HTTPS clients resolve
+trust differently, which matters on any network that re-terminates TLS (an
+inspecting proxy, a sandboxed CI runner):
+
+- `httpx` (the Anthropic SDK) reads `SSL_CERT_FILE` / `SSL_CERT_DIR` and
+  **ignores `REQUESTS_CA_BUNDLE` entirely**.
+- The Snowflake connector resolves `ca_certs` kwarg → `REQUESTS_CA_BUNDLE` →
+  `SSL_CERT_FILE`, then falls back to `certifi`. `ca_certs` is a socket-level
+  argument, not a `connect()` parameter, so env vars are the only route.
+
+`SSL_CERT_FILE` is the one name both honor; `SAM_CA_BUNDLE` wins over both.
+The module also converts a mistyped bundle path into a loud error — the
+Snowflake connector otherwise swallows it in a `try/except ... pass` and fails
+later with a message that never mentions the typo.
+
+It deliberately has no "insecure" / `verify=False` switch. The fix for an
+interception proxy is to trust its CA, never to stop verifying — don't add one.
+
 ### `query_snowflake`'s guard is a guardrail, not a boundary
 
 `validate_read_only_sql` in `actions/snowflake_actions.py` tokenizes SQL rather
@@ -94,9 +128,16 @@ comments, so a semicolon inside `'a;b'` is data while `select 1; drop table t`
 is refused, and it follows a `WITH`/`EXPLAIN` through to the statement it
 actually runs. `tests/test_sql_guard.py` pins that behavior.
 
-Treat it as usability protection only. The durable protection is a Snowflake
-role holding just `USAGE`/`SELECT`, pointed at by `SNOWFLAKE_ROLE`. Don't
-present the guard as a security control when writing docs or PR descriptions.
+Treat it as usability protection only. The boundary is the Snowflake role in
+`snowflake/readonly_role.sql` — `USAGE`/`SELECT` and nothing else — rendered
+and applied by `scripts/snowflake_readonly_role.py` and proven by
+`scripts/verify_snowflake_readonly.py`, with `SNOWFLAKE_ROLE` pointing the
+actions at it. Don't present the guard as a security control when writing docs
+or PR descriptions; the role is the thing that makes the claim true.
+
+The verifier distinguishes a *privilege* error from a "table not found" error
+on its write probes — only the former proves the role is safe. A probe that
+fails for the wrong reason is not a pass.
 
 ### Test layout
 
@@ -110,13 +151,20 @@ module fails to resolve its own module.
 The agent tests stub both HTTP and the tool runner, so the whole suite runs with
 no API key, no network, and no warehouse.
 
-### `agents/` vs `managed-agents/` — easy to confuse
+### Three agent-shaped directories — easy to confuse
 
 - `agents/` — agents built **with** this repo: Claude + the actions as tools.
 - `managed-agents/` — Claude Code subagent definitions (`*.md`) used to work
   **on** this repo, plus a cross-platform installer that deploys them into the
   Claude Code managed-settings directory, where they override project- and
   user-level subagents of the same name.
+- `docs/samepos-project/` — the version-controlled source for a **claude.ai
+  Project** (custom instructions, knowledge files, starter prompts) about the
+  SAMePOS product. Nothing here executes; it is edited, committed, then
+  re-uploaded to the Project by hand.
+
+None of the three substitutes for another, and a change in one does not
+propagate to the others.
 
 ### `db/` — SAMePOS licensing core, not yet reconciled
 
