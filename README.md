@@ -215,7 +215,7 @@ bundle with any of:
 | `SSL_CERT_FILE`      | Honoured; the only name both underlying clients agree on   |
 
 The value is a PEM bundle, or a directory of hashed certificates. One variable
-covers both clients: the Anthropic SDK gets an `httpx` client built against the
+covers both clients: the Anthropic SDK gets an `httpx2` client built against the
 bundle, and the Snowflake connector - which only reads the environment, having
 no CA connect parameter - has the bundle exported under the names it looks for.
 

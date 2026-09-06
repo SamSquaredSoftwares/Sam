@@ -1,15 +1,16 @@
 """Shared TLS trust configuration for the Sam actions.
 
 Both outbound clients in this package speak HTTPS: the Anthropic SDK (via
-`httpx`) and the Snowflake connector (via `urllib3`). On a network that
+`httpx2`, the maintained fork of `httpx` that SDK 1.x is built on) and the
+Snowflake connector (via `urllib3`). On a network that
 re-terminates TLS - a corporate inspecting proxy, or a sandboxed CI runner -
 neither of them trusts the interceptor's CA by default, so every call fails
 with a certificate verification error until they are pointed at the right
 bundle. The two clients disagree about how to be told, which is the whole
 reason this module exists:
 
-* `httpx` reads `SSL_CERT_FILE` and `SSL_CERT_DIR`. It ignores
-  `REQUESTS_CA_BUNDLE` entirely.
+* `httpx2` reads `SSL_CERT_FILE` and `SSL_CERT_DIR`, exactly as `httpx` did. It
+  ignores `REQUESTS_CA_BUNDLE` entirely.
 * The Snowflake connector resolves its bundle as
   `ca_certs` kwarg -> `REQUESTS_CA_BUNDLE` -> `SSL_CERT_FILE`, and falls back
   to `certifi`. `ca_certs` is a socket-level argument, not a `connect()`
@@ -145,26 +146,31 @@ def build_ssl_context(env: Mapping[str, str] | None = None) -> ssl.SSLContext | 
 
 
 def anthropic_http_client(env: Mapping[str, str] | None = None) -> Any | None:
-    """Return an `httpx.Client` trusting the configured bundle, or `None`.
+    """Return an HTTP client for the Anthropic SDK that trusts the configured
+    bundle, or `None`.
 
     `None` means no bundle is configured, in which case the Anthropic SDK
     should build its own client. `trust_env` stays on so proxy variables keep
     working; only the trust store is being overridden here.
 
-    The timeout is deliberately left at httpx's default. The SDK compares a
-    supplied client's timeout against that default and, finding it unchanged,
-    applies its own (600s read/write) instead - so trust can be configured
-    without silently cutting long generations down to httpx's 5s. Setting a
-    timeout here would override that, which is why this takes no timeout
-    argument.
+    The client is the SDK's own `DefaultHttpxClient` rather than a bare
+    `httpx2.Client`. SDK 1.x is built on `httpx2` and rejects an object from the
+    old `httpx` package outright, so the class has to come from the SDK side of
+    that boundary anyway - and `DefaultHttpxClient` also carries the SDK's own
+    timeout (600s read/write, against a bare client's 5s) and connection
+    limits, so overriding trust cannot silently cut long generations short.
+    Passing a timeout here would override that, which is why this takes no
+    timeout argument.
     """
     context = build_ssl_context(env)
     if context is None:
         return None
 
-    import httpx
+    # Imported lazily so this module stays importable - and testable - without
+    # the SDK installed; see `CaBundleError`.
+    from anthropic import DefaultHttpxClient
 
-    return httpx.Client(verify=context, trust_env=True)
+    return DefaultHttpxClient(verify=context, trust_env=True)
 
 
 def apply_snowflake_ca_env(
