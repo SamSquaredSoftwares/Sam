@@ -37,7 +37,15 @@ python -m agents.snowflake_analyst "Which 5 customers spent the most?"
 ```
 
 No linter or formatter is configured — there is no `pyproject.toml`, ruff, or
-flake8 config in the repo, and no CI workflows. `pytest` is the only check.
+flake8 config. `pytest` is the only check on the Python code.
+
+CI (`.github/workflows/ci.yml`) runs this suite on **both 3.12 and 3.13** with
+`fail-fast: false`, because the two interpreters catch different things: 3.12
+is the floor `sema4ai-action-server>=3.2.0` will resolve on, and 3.13 turns on
+`VERIFY_X509_STRICT` in `create_default_context()`, which is what catches
+non-RFC-5280 certificate handling. It sets `SAM_TESTS_REQUIRE_TLS=1` so that a
+TLS test skipping for a missing `cryptography` becomes a failure rather than a
+silent green.
 
 ## Architecture
 
@@ -93,12 +101,13 @@ connector failed at import. Note also that the agent uses the SDK's *beta* tool
 runner (`anthropic.beta_tool`, `client.beta.messages.tool_runner`), which is
 verified against 1.0.0 but is not a stable API surface.
 
-**Known failure from that same split:** `tls_trust.anthropic_http_client()`
-builds an `httpx.Client`, but `anthropic` 1.0 is built on `httpx2` and rejects
-it with a `TypeError`, so passing a custom CA bundle down the Anthropic path
-does not currently work. `tests/test_actions_trust.py::TestAnthropicTimeoutPreserved::test_effective_timeout_matches_the_sdk_default`
-fails on `main` because of it. Everything else in the suite passes; if you see
-exactly that one failure, it is pre-existing, not something you broke.
+That split has already broken this repo once: `tls_trust.anthropic_http_client()`
+used to build an `httpx.Client`, which `anthropic` 1.0 rejects with a
+`TypeError`, silently disabling custom CA bundles on the Anthropic path. It is
+fixed — the client is built on the SDK's `httpx2` boundary and `requirements.txt`
+caps the SDK at `anthropic>=1,<2` — and the CI job added alongside exists
+because nothing was running these tests when it slipped through. When touching
+either HTTP client, check which of the two libraries you are handing to whom.
 
 ### Outbound TLS: two clients that disagree about CA bundles
 
