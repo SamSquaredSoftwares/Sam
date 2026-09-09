@@ -46,7 +46,7 @@ Ten files. Their state as of this commit:
 | # | File | State | Your action |
 |---|------|-------|-------------|
 | 1 | `CASHUP_AND_STOCK_RULES.md` | DRAFT from this repo | Run the rescue prompt above, merge, correct |
-| 2 | `SCHEMA.sql` | PLACEHOLDER | Restore the paused Supabase project, run the pg_dump command inside the file |
+| 2 | `SCHEMA.sql` | CLOUD DUMP, 25 Aug 2026 | Cloud half is done and has a big finding: no POS tables in the cloud yet. Dump the local node schema on port 5433 and add it (steps in the file) |
 | 3 | `ARCHITECTURE.md` | DRAFT | Read once, correct anything wrong, commit |
 | 4 | `SYNC_ENGINE.md` | PLACEHOLDER | Upload the real `SYNC_ENGINE.py` from the product repo instead |
 | 5 | `ENV_TEMPLATE.md` | DRAFT | Diff against your real `.env` files, add anything missing |
