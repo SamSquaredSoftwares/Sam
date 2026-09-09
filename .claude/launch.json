@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "action-server",
+      "runtimeExecutable": "C:/Program Files/Git/bin/bash.exe",
+      "runtimeArgs": [
+        "scripts/run_local.sh",
+        "8080"
+      ],
+      "port": 8080
+    }
+  ]
+}
