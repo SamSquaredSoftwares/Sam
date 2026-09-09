@@ -9,22 +9,31 @@ be worked around. **This role is the boundary.** It holds only `USAGE` and
 
 ```bash
 # 1. Review the SQL (prints by default -- these are privilege changes)
-python scripts/snowflake_readonly_role.py \
+.venv/bin/python scripts/snowflake_readonly_role.py \
   --role SAM_READONLY --user SAM_SERVICE \
   --warehouse COMPUTE_WH --database ANALYTICS
 
-# 2. Apply it, as an admin who can create roles and owns the objects
+# 2. Apply it, as an admin who can create roles and owns the objects.
+#    Repeat the flags from step 1: --execute re-renders from whatever it is
+#    given, so running it bare applies different SQL than you just read. It
+#    prints the statements and asks before running them (--yes skips the
+#    prompt, and is required when stdin is not a terminal).
 export SNOWFLAKE_ACCOUNT=myorg-myaccount
 export SNOWFLAKE_ADMIN_USER=...       # SECURITYADMIN + object ownership
 export SNOWFLAKE_ADMIN_PASSWORD=...
-python scripts/snowflake_readonly_role.py --execute
+.venv/bin/python scripts/snowflake_readonly_role.py \
+  --role SAM_READONLY --user SAM_SERVICE \
+  --warehouse COMPUTE_WH --database ANALYTICS --execute
 
 # 3. Point the Action Server at it
 echo 'SNOWFLAKE_ROLE=SAM_READONLY' >> .env
 
 # 4. Prove it is actually read-only
-python scripts/verify_snowflake_readonly.py
+.venv/bin/python scripts/verify_snowflake_readonly.py
 ```
+
+Both scripts read `.env` as well as the environment, so step 4 picks up the
+`SNOWFLAKE_ROLE` written in step 3.
 
 You can equally paste [`readonly_role.sql`](readonly_role.sql) into SnowSQL or
 the Snowflake web UI after replacing the four placeholders yourself. Every
@@ -66,8 +75,35 @@ database. Re-run with `--database` for each one the agent should read.
 
 ## What the verifier checks
 
-`scripts/verify_snowflake_readonly.py` connects as the role and asserts that
-reads succeed and that `CREATE TABLE`, `INSERT`, `UPDATE`, `DELETE`,
-`DROP TABLE`, and `CREATE SCHEMA` are all refused. It distinguishes a
-*privilege* error from a "table does not exist" error — only the former proves
-the role is safe — and exits non-zero on failure so it can gate a deploy.
+`scripts/verify_snowflake_readonly.py` connects as the role and proves three
+things, exiting non-zero unless all three hold, so it can gate a deploy:
+
+1. **Reads work** — `SELECT` succeeds, so the Action Server is actually usable.
+2. **Every grant on the role is read-only** — it reads `SHOW GRANTS TO ROLE`
+   and fails on any privilege beyond `USAGE`/`SELECT`/`REFERENCES`/`MONITOR`/
+   `OPERATE`, and on any *inherited* role, whose privileges would apply here
+   too.
+3. **Writes are refused** — `INSERT`, `UPDATE`, `DELETE`, `CREATE TABLE` and
+   `CREATE SCHEMA` are all rejected on privileges.
+
+Two details in (3) decide whether it proves anything at all.
+
+**The DML probes have to hit a table that exists.** Snowflake answers a write
+against a missing table with `Object '...' does not exist or not authorized` —
+the identical answer a role with full write access gets. A probe aimed at a
+table that does not exist is therefore not evidence, whatever the error says.
+So the verifier finds a real base table through `INFORMATION_SCHEMA` (override
+with `--probe-table DB.SCHEMA.TABLE`) and probes that. Nothing is written to
+it: each statement carries `where 1 = 0` and the lot runs inside a transaction
+that is rolled back, so the probes stay harmless even against a role that turns
+out to be able to write.
+
+**Anything short of a privilege refusal is a failure.** A probe that fails
+because the object was missing, or for a reason the script does not recognise,
+proves nothing — so it fails the run and prints the error, rather than warning
+and exiting 0.
+
+There is deliberately no `DROP TABLE` probe. It cannot be made harmless the way
+the DML probes can, and aiming it at a table that does not exist is what made
+the earlier version of this script useless. `SHOW GRANTS` covers it instead: a
+role can only drop what it owns, and check (2) fails on `OWNERSHIP`.

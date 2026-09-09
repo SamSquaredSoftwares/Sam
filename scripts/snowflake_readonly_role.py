@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
 """Render (and optionally apply) the read-only Snowflake role DDL.
 
-    # print the SQL for review, filling placeholders from the environment
-    python scripts/snowflake_readonly_role.py
+    # print the SQL for review, filling placeholders from .env / the environment
+    .venv/bin/python scripts/snowflake_readonly_role.py
 
     # override any value
-    python scripts/snowflake_readonly_role.py --role SAM_READONLY --database ANALYTICS
+    .venv/bin/python scripts/snowflake_readonly_role.py \
+        --role SAM_READONLY --user SAM_SERVICE \
+        --warehouse COMPUTE_WH --database ANALYTICS
 
     # apply it (needs admin credentials with SECURITYADMIN + object ownership)
-    python scripts/snowflake_readonly_role.py --execute
+    .venv/bin/python scripts/snowflake_readonly_role.py ... --execute
 
 Printing is the default: this generates privilege changes, so you should read
 them before they run.
+
+`--execute` re-renders from whatever flags and environment it is given, which
+is not necessarily what you reviewed a moment ago -- the same command without
+`--role`/`--database` produces different SQL. So it prints the statements it
+is about to run and asks for confirmation; `--yes` skips the prompt and is
+required when stdin is not a terminal.
 """
 
 from __future__ import annotations
@@ -21,6 +29,9 @@ import os
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import dotenv_file  # noqa: E402  (needs the path above)
 
 TEMPLATE = Path(__file__).resolve().parent.parent / "snowflake" / "readonly_role.sql"
 
@@ -80,6 +91,9 @@ def split_statements(sql: str) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Before argparse, whose defaults are read out of the environment.
+    dotenv_file.load_repo_dotenv()
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--role", default=os.environ.get("SNOWFLAKE_READONLY_ROLE", "SAM_READONLY"))
     parser.add_argument("--user", default=os.environ.get("SNOWFLAKE_USER", ""))
@@ -89,6 +103,12 @@ def main(argv: list[str] | None = None) -> int:
         "--execute",
         action="store_true",
         help="Run the statements instead of printing them. Requires admin credentials.",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the confirmation prompt shown by --execute. Required when "
+        "stdin is not a terminal.",
     )
     args = parser.parse_args(argv)
 
@@ -103,7 +123,8 @@ def main(argv: list[str] | None = None) -> int:
     except (InvalidIdentifier, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         print(
-            "\nSupply the missing values as flags or environment variables:\n"
+            "\nSupply the missing values as flags, in .env, or as environment\n"
+            "variables:\n"
             "  --role/SNOWFLAKE_READONLY_ROLE  --user/SNOWFLAKE_USER\n"
             "  --warehouse/SNOWFLAKE_WAREHOUSE --database/SNOWFLAKE_DATABASE",
             file=sys.stderr,
@@ -135,6 +156,31 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     statements = split_statements(sql)
+
+    # What gets applied is re-rendered from the arguments to *this* run, which
+    # need not match the review run. Show it, so a divergence is visible at the
+    # only moment it can still be caught.
+    if not args.yes:
+        print(sql)
+        print(
+            f"\nThe {len(statements)} statements above will be applied to "
+            f"account {account} as {admin_user}."
+        )
+        if not sys.stdin.isatty():
+            print(
+                "error: refusing to apply without confirmation. Re-run with --yes "
+                "once you have read the SQL above.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            answer = input("Apply them? [y/N] ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer not in ("y", "yes"):
+            print("Aborted; nothing was applied.")
+            return 1
+
     print(f"Applying {len(statements)} statements as {admin_user}...")
     conn = snowflake.connector.connect(
         account=account, user=admin_user, password=admin_password, login_timeout=30
@@ -161,7 +207,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    print("\nAll statements applied. Verify with:\n  python scripts/verify_snowflake_readonly.py")
+    print(
+        "\nAll statements applied. Verify with:\n"
+        "  .venv/bin/python scripts/verify_snowflake_readonly.py"
+    )
     return 0
 
 
