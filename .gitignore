@@ -18,8 +18,14 @@ output/
 .devrun/
 *.zip
 
-# Node
-node_modules/
+  <<<<<<< claude/managed-subagents-deployment-fgpjqr
+  # Node
+  node_modules/
+  =======
+  # Claude Code — personal overrides. The shared config (.claude/settings.json)
+  # and its hooks are committed; this file is per-developer and must not be.
+  .claude/settings.local.json
+  >>>>>>> main
 
 # OS / editor
 .DS_Store

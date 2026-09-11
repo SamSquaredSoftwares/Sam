@@ -7,15 +7,23 @@
 
 BEGIN;
 
--- Detach the guard trigger if its table exists (IF EXISTS alone still errors
--- when the table is absent, so guard on the relation).
+-- Detach the guard trigger wherever it was attached. The guard lands on a
+-- payment table (name varies by build), and older revisions attached it to
+-- sales_order, so drop by locating the trigger rather than guessing the table.
 DO $$
+DECLARE r record;
 BEGIN
-    IF to_regclass('public.sales_order') IS NOT NULL THEN
-        EXECUTE 'DROP TRIGGER IF EXISTS trg_licence_guard_sales ON public.sales_order';
-    END IF;
+    FOR r IN
+        SELECT c.oid::regclass AS tbl
+          FROM pg_trigger t
+          JOIN pg_class c ON c.oid = t.tgrelid
+         WHERE t.tgname = 'trg_licence_guard_sales' AND NOT t.tgisinternal
+    LOOP
+        EXECUTE format('DROP TRIGGER IF EXISTS trg_licence_guard_sales ON %s', r.tbl);
+    END LOOP;
 END$$;
 
+DROP FUNCTION IF EXISTS licence_attach_guard_auto();
 DROP FUNCTION IF EXISTS licence_attach_guard(text);
 DROP FUNCTION IF EXISTS licence_guard_sales();
 DROP FUNCTION IF EXISTS licence_is_valid();

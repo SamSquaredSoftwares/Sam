@@ -1,16 +1,27 @@
 -- ===========================================================================
 -- behavior.sql — behavioural assertions for the SAMePOS licensing core.
--- Run against a database that has 024_licensing.sql applied AND a sales_order
+-- Run against a database that has 024_licensing.sql applied AND a payment
 -- stub/table present (so the hard-guard trigger is attached). Uses plpgsql
 -- ASSERT; any failure aborts under psql -v ON_ERROR_STOP=1.
 -- ===========================================================================
 \set ON_ERROR_STOP on
 
--- Guard trigger must be attached (stub table existed at migration time).
+-- Guard trigger must be attached, and specifically to the PAYMENT table --
+-- enforcement happens at payment, not at tab-open, so an expired licence can
+-- never strand an open shift.
 DO $$
+DECLARE v_tbl text;
 BEGIN
-    ASSERT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_licence_guard_sales'),
-        'hard-guard trigger was not attached to the sales table';
+    SELECT c.relname INTO v_tbl
+      FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+     WHERE t.tgname = 'trg_licence_guard_sales' AND NOT t.tgisinternal;
+    ASSERT v_tbl IS NOT NULL, 'hard-guard trigger was not attached';
+    ASSERT v_tbl = 'sales_payment',
+        'guard must attach to the payment table, got '||v_tbl;
+    ASSERT NOT EXISTS (
+        SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+         WHERE t.tgname = 'trg_licence_guard_sales' AND c.relname = 'sales_order'),
+        'guard must NOT block tab-open (sales_order)';
 END$$;
 
 -- 1. No node identity yet -> state 'none', invalid.
@@ -163,10 +174,11 @@ BEGIN
         'extended trial ~30d, got '||coalesce(s.days_remaining::text,'null');
 END$$;
 
--- 10. Hard guard behaviour.
--- 10a. Valid licence -> sale allowed even with hard enforcement ON.
+-- 10. Hard guard behaviour (enforcement point = payment).
+-- 10a. Valid licence -> payment allowed even with hard enforcement ON.
 UPDATE licence_config SET hard_enforcement = true WHERE id = 1;
 INSERT INTO sales_order (business_day_id) VALUES (1);
+INSERT INTO sales_payment (sales_order_id, amount) VALUES (1, 10.00);
 
 -- 10b. Revoke the extended trial -> node now invalid (only expired trial left).
 DO $$
@@ -183,25 +195,51 @@ BEGIN
     ASSERT NOT s.is_valid, 'expected invalid after revoking all valid licences, state '||s.state;
 END$$;
 
--- 10c. hard_enforcement ON + invalid -> sale BLOCKED.
+-- 10c. hard_enforcement ON + invalid -> PAYMENT blocked.
 DO $$
 BEGIN
     BEGIN
-        INSERT INTO sales_order (business_day_id) VALUES (2);
-        RAISE EXCEPTION 'SENTINEL: expected the guard to block this sale';
+        INSERT INTO sales_payment (sales_order_id, amount) VALUES (1, 20.00);
+        RAISE EXCEPTION 'SENTINEL: expected the guard to block this payment';
     EXCEPTION WHEN others THEN
-        ASSERT SQLERRM NOT LIKE 'SENTINEL:%', 'hard guard did NOT block a sale while invalid';
+        ASSERT SQLERRM NOT LIKE 'SENTINEL:%', 'hard guard did NOT block a payment while invalid';
     END;
 END$$;
 
--- 10d. Advisory only (hard_enforcement OFF) + invalid -> sale ALLOWED.
-UPDATE licence_config SET hard_enforcement = false WHERE id = 1;
-INSERT INTO sales_order (business_day_id) VALUES (3);
+-- 10c-bis. ...but opening/continuing a tab still works, so an expired licence
+-- never strands an open shift mid-service.
+INSERT INTO sales_order (business_day_id) VALUES (2);
 DO $$
 DECLARE c int;
 BEGIN
     SELECT count(*) INTO c FROM sales_order;
-    ASSERT c = 2, 'expected 2 committed orders (10a + 10d); the blocked one must not persist. got '||c;
+    ASSERT c = 2, 'tab-open must remain allowed while invalid; got '||c||' orders';
+END$$;
+
+-- 10d. Advisory only (hard_enforcement OFF) + invalid -> payment ALLOWED.
+UPDATE licence_config SET hard_enforcement = false WHERE id = 1;
+INSERT INTO sales_payment (sales_order_id, amount) VALUES (2, 30.00);
+DO $$
+DECLARE c int;
+BEGIN
+    SELECT count(*) INTO c FROM sales_payment;
+    ASSERT c = 2, 'expected 2 committed payments (10a + 10d); the blocked one must not persist. got '||c;
+END$$;
+
+-- 11. First-boot concurrency backstop: the partial unique index must make a
+-- second auto trial impossible even if a caller bypasses licence_ensure_trial().
+DO $$
+DECLARE v_code text;
+BEGIN
+    SELECT install_code INTO v_code FROM licence_node WHERE id = 1;
+    BEGIN
+        INSERT INTO licence (mode, install_code, source, verified, starts_at, expires_at, trial_days)
+        VALUES ('trial', v_code, 'auto', true, now(), now() + interval '14 days', 14);
+        RAISE EXCEPTION 'SENTINEL: expected the unique index to reject a second auto trial';
+    EXCEPTION WHEN others THEN
+        ASSERT SQLERRM NOT LIKE 'SENTINEL:%',
+            'a second auto trial was allowed; licence_one_auto_trial_uidx is not protecting first boot';
+    END;
 END$$;
 
 \echo '>>> ALL BEHAVIOUR ASSERTIONS PASSED'
