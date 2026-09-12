@@ -9,10 +9,15 @@ actions/            The action package
   package.yaml      Package metadata + managed-environment dependencies (RCC)
   actions.py        The @action definitions
   snowflake_actions.py  The Snowflake @action definitions
+  tls_trust.py      Shared CA-bundle handling for outbound HTTPS
+agents/
+  snowflake_analyst.py  Claude agent that answers questions via the actions
 scripts/
   run_local.sh      Start the Action Server in unmanaged mode (no RCC needed)
 docs/
   AI_AGENT_BLUEPRINT.md  How to build an AI agent on top of these actions
+  samepos-project/  The SAMePOS Claude Project setup pack (instructions + knowledge files)
+snowflake/          Read-only role DDL for the Snowflake actions
 db/                 Licensing schema, migrations, and SQL behavior tests
 managed-agents/     Claude Code managed subagents + cross-platform installer
 tests/              Python test suite
@@ -26,9 +31,16 @@ requirements.txt    Dependencies for the local virtualenv
   choosing among the four build approaches, designing the tool surface from
   these actions, a runnable Snowflake analyst agent, and production hardening
   (secrets, error handling, prompt caching, context management, evals).
+- [`docs/samepos-project/README.md`](docs/samepos-project/README.md) — the
+  SAMePOS Claude Project setup pack: the custom instructions, the ten knowledge
+  files (drafted from this repo where possible), and the starter prompts,
+  version-controlled so they can never be lost in chat threads again.
 - [`managed-agents/README.md`](managed-agents/README.md) — the Claude Code
   managed subagents used to work *on* this repo, and how to install them.
   (Distinct from the agents the blueprint teaches you to build *with* this repo.)
+- [`snowflake/README.md`](snowflake/README.md) — the read-only Snowflake role
+  that backs `query_snowflake`: how to apply it, and the four things that
+  decide whether it actually protects you.
 - [`db/README.md`](db/README.md) — licensing schema, migrations, and how to run
   the database tests.
 
@@ -60,7 +72,10 @@ environments.
 
 Once running:
 
-- Web UI / OpenAPI: `http://localhost:8080` (spec at `/openapi.json`)
+- API docs (Swagger UI): `http://localhost:8080/docs` (spec at `/openapi.json`).
+  The bundled web UI at `/` is absent from the PyPI wheel of
+  `sema4ai-action-server` 3.2.0 (`_static_contents` is not shipped), so `/`
+  returns an error; use `/docs` instead.
 - MCP endpoint: `http://localhost:8080/mcp`
 - Run an action:
 
@@ -75,6 +90,22 @@ curl -X POST http://localhost:8080/api/actions/sam-actions/ask-claude/run \
 
 Set `ANTHROPIC_API_KEY` in the server's environment (or pass the `api_key`
 secret through the action context) before calling `ask_claude`.
+
+## Running an agent
+
+With the server up, `agents/snowflake_analyst.py` answers questions by letting
+Claude query the warehouse through the Snowflake actions:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+.venv/bin/python -m agents.snowflake_analyst "Which 5 customers generated the most revenue last quarter?"
+```
+
+It discovers the action package from the server's OpenAPI spec; use `--server`
+(or `SAM_ACTION_SERVER`) to point it elsewhere, and `--effort low` to trade
+depth for speed. The Snowflake credentials stay with the Action Server — the
+agent process only ever sees `ANTHROPIC_API_KEY`. See
+[The AI Agent Blueprint](docs/AI_AGENT_BLUEPRINT.md) for how it is built.
 
 ## Snowflake configuration
 
@@ -123,8 +154,99 @@ curl -X POST http://localhost:8080/api/actions/sam-actions/query-snowflake/run \
   -d '{"sql": "select current_timestamp()", "max_rows": 10}'
 ```
 
-`query_snowflake` only accepts a single read-only statement
-(SELECT/SHOW/DESCRIBE/WITH/EXPLAIN) and caps results at 1000 rows.
+### Read-only guard
+
+`query_snowflake` accepts a single read-only statement (SELECT / SHOW /
+DESCRIBE / WITH / EXPLAIN) and caps results at 1000 rows. The guard parses the
+statement rather than pattern-matching it, so it understands comments, string
+literals, quoted identifiers, and parentheses:
+
+- Stacked statements are refused (`select 1; drop table t`), while a semicolon
+  *inside a string literal* (`select 'a;b'`) is data and passes through.
+- A leading comment (`-- note`) does not hide the real first keyword.
+- A `WITH` clause must feed a `SELECT`, so `with x as (...) insert into ...`
+  is refused, and `EXPLAIN` is only allowed for read-only statements.
+
+**This guard is a usability guardrail, not a security boundary.** Any
+application-level SQL check can be worked around. The durable protection is a
+read-only Snowflake role, so the warehouse itself refuses writes:
+
+```bash
+# Review the SQL. Pass the same flags to the --execute run below: it
+# re-renders from what it is given, so dropping them applies different SQL.
+.venv/bin/python scripts/snowflake_readonly_role.py \
+  --role SAM_READONLY --user SAM_SERVICE \
+  --warehouse COMPUTE_WH --database ANALYTICS
+
+# Apply it, as an admin who can create roles and owns the objects. Prints the
+# statements and asks before running them.
+.venv/bin/python scripts/snowflake_readonly_role.py \
+  --role SAM_READONLY --user SAM_SERVICE \
+  --warehouse COMPUTE_WH --database ANALYTICS --execute
+
+echo 'SNOWFLAKE_ROLE=SAM_READONLY' >> .env
+.venv/bin/python scripts/verify_snowflake_readonly.py   # prove writes are refused
+```
+
+See [`snowflake/README.md`](snowflake/README.md) — in particular the caveats
+about the service user holding no other role, and privileges inherited from
+`PUBLIC`, either of which will undo the protection.
+
+## Tests
+
+```bash
+.venv/bin/python -m pytest tests/ -q
+```
+
+`pytest` is in `requirements.txt`. Use it rather than
+`python -m unittest discover -s tests`, which collects only the
+`unittest`-style tests and silently ignores the function-style ones, so it
+reports a pass having run a fraction of the suite.
+
+The suite covers the SQL guard's regressions (destructive statements,
+stacked-statement injection, malformed literals, and the read-only SQL that
+must keep working) as well as TLS trust resolution and certificate handling.
+
+The certificate tests need `cryptography`, which arrives transitively with
+`requirements.txt`; on a minimal install they skip. Set
+`SAM_TESTS_REQUIRE_TLS=1` to turn those skips into failures, so CI cannot report
+green while the checks that matter most are quietly not running.
+
+## TLS trust (inspecting proxies and private CAs)
+
+Behind a TLS-terminating proxy - a corporate inspecting proxy, or a sandboxed CI
+runner - the outbound clients do not trust the interceptor's CA, and every call
+fails with a certificate verification error. Point the actions at the right
+bundle with any of:
+
+| Variable             | Notes                                                     |
+| -------------------- | --------------------------------------------------------- |
+| `SAM_CA_BUNDLE`      | Highest priority; specific to this package                 |
+| `REQUESTS_CA_BUNDLE` | Honoured for compatibility with the wider ecosystem        |
+| `SSL_CERT_FILE`      | Honoured; the only name both underlying clients agree on   |
+
+The value is a PEM bundle, or a directory of hashed certificates. One variable
+covers both clients: the Anthropic SDK gets an `httpx2` client built against the
+bundle, and the Snowflake connector - which only reads the environment, having
+no CA connect parameter - has the bundle exported under the names it looks for.
+
+```bash
+export SAM_CA_BUNDLE=/path/to/corporate-ca.pem
+./scripts/run_local.sh
+```
+
+`health_check` reports the trust configuration in effect, which makes it a
+one-call diagnostic for this class of failure:
+
+```
+... sema4ai-actions=1.6.6 ca_bundle=/path/to/corporate-ca.pem source=SAM_CA_BUNDLE status=ok
+```
+
+A bundle that is configured but unusable - a mistyped path, an empty file, a PEM
+holding only a CRL - is a hard error naming the offending variable, rather than a
+silent fallback to the default trust store followed by a confusing handshake
+error. Verification itself cannot be turned off: the fix for an interception
+proxy is to trust its CA, never to stop checking.
 
 ## Managed environments (production)
 

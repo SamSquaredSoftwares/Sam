@@ -106,6 +106,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS licence_key_fingerprint_uidx
     ON licence (key_fingerprint) WHERE key_fingerprint IS NOT NULL;
 CREATE INDEX IF NOT EXISTS licence_install_active_idx
     ON licence (install_code, revoked_at, expires_at);
+-- At most one auto-started trial per node, enforced by the database. This is the
+-- backstop for the first-boot race described on licence_ensure_trial(): several
+-- tablets can call it in the same second, and a check-then-insert alone would
+-- create duplicate trials (the same failure mode the product hit on business_day).
+CREATE UNIQUE INDEX IF NOT EXISTS licence_one_auto_trial_uidx
+    ON licence (install_code) WHERE mode = 'trial' AND source = 'auto';
 
 -- --- licence_audit: append-only lifecycle audit -----------------------------
 CREATE TABLE IF NOT EXISTS licence_audit (
@@ -147,6 +153,13 @@ BEGIN
 END$$;
 
 -- Auto-start the standard trial on first boot, only if the node has no licence.
+--
+-- Concurrency: on first boot several tablets can call this in the same second.
+-- A bare check-then-insert would then create duplicate trials — the same race
+-- the product hit on business_day (fixed there with an advisory lock). We take a
+-- transaction-scoped advisory lock keyed on the install code and re-read under
+-- it, so exactly one caller inserts and the rest return that row. The partial
+-- unique index licence_one_auto_trial_uidx is the database-level backstop.
 CREATE OR REPLACE FUNCTION licence_ensure_trial(p_days integer DEFAULT NULL)
 RETURNS licence
 LANGUAGE plpgsql AS $$
@@ -160,6 +173,11 @@ BEGIN
         RAISE EXCEPTION 'node identity not set; call licence_set_node(install_code) first';
     END IF;
 
+    -- Serialise concurrent first-boot callers for this node.
+    PERFORM pg_advisory_xact_lock(hashtext(v_node.install_code));
+
+    -- Re-read under the lock: another caller may have created the trial while
+    -- we waited.
     IF EXISTS (SELECT 1 FROM licence WHERE install_code = v_node.install_code) THEN
         SELECT * INTO v_lic FROM licence
          WHERE install_code = v_node.install_code
@@ -380,8 +398,16 @@ $$;
 -- Optional hard guard (advisory by default; gated by licence_config)
 -- ===========================================================================
 
--- BEFORE INSERT trigger function: blocks a new sale only when hard enforcement
--- is switched on AND the licence is invalid. Shipped OFF (hard_enforcement=false).
+-- BEFORE INSERT trigger function: blocks the operation only when hard
+-- enforcement is switched on AND the licence is invalid. Shipped OFF
+-- (hard_enforcement = false).
+--
+-- Enforcement point: PAYMENT, not tab-open. `sales_order` rows are created when
+-- staff open a tab (the runbook's gotcha #4 is a NOT NULL violation on
+-- sales_order.business_day_id at POST /api/orders), so guarding that insert
+-- would stop staff opening or continuing tabs and could strand an open shift
+-- mid-service. Guarding the payment insert instead lets an in-progress shift
+-- keep serving while preventing the node from taking money on a dead licence.
 CREATE OR REPLACE FUNCTION licence_guard_sales()
 RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -389,14 +415,17 @@ BEGIN
     IF COALESCE((SELECT hard_enforcement FROM licence_config WHERE id = 1), false)
        AND NOT licence_is_valid() THEN
         RAISE EXCEPTION
-            'SAMePOS licence invalid or expired; new sales are blocked (hard enforcement is ON). See /api/licence/status.'
+            'SAMePOS licence invalid or expired; payments are blocked (hard enforcement is ON). See /api/licence/status.'
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
 END$$;
 
--- Attach the guard to a sales table (default public.sales_order). Idempotent.
-CREATE OR REPLACE FUNCTION licence_attach_guard(p_table text DEFAULT 'public.sales_order')
+-- Attach the guard to the payment table. Idempotent.
+-- The product's payment table name is not pinned down by the runbook, so the
+-- default is probed against a list of likely names by licence_attach_guard_auto();
+-- pass an explicit table when you know it.
+CREATE OR REPLACE FUNCTION licence_attach_guard(p_table text)
 RETURNS void
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -409,14 +438,34 @@ BEGIN
         'FOR EACH ROW EXECUTE FUNCTION licence_guard_sales()', p_table);
 END$$;
 
--- Attach now if the sales table already exists; otherwise leave a breadcrumb.
-DO $$
+-- Attach to the first payment-like table that exists; returns the table chosen,
+-- or NULL when none is present yet.
+CREATE OR REPLACE FUNCTION licence_attach_guard_auto()
+RETURNS text
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_candidates text[] := ARRAY['public.sales_payment', 'public.sale_payment',
+                                 'public.order_payment', 'public.payment'];
+    v_t text;
 BEGIN
-    IF to_regclass('public.sales_order') IS NOT NULL THEN
-        PERFORM licence_attach_guard('public.sales_order');
-        RAISE NOTICE 'licence hard-guard attached to public.sales_order (gated by licence_config.hard_enforcement, currently OFF).';
+    FOREACH v_t IN ARRAY v_candidates LOOP
+        IF to_regclass(v_t) IS NOT NULL THEN
+            PERFORM licence_attach_guard(v_t);
+            RETURN v_t;
+        END IF;
+    END LOOP;
+    RETURN NULL;
+END$$;
+
+-- Attach now if a payment table already exists; otherwise leave a breadcrumb.
+DO $$
+DECLARE v_attached text;
+BEGIN
+    v_attached := licence_attach_guard_auto();
+    IF v_attached IS NOT NULL THEN
+        RAISE NOTICE 'licence hard-guard attached to % (gated by licence_config.hard_enforcement, currently OFF).', v_attached;
     ELSE
-        RAISE NOTICE 'public.sales_order not found; hard-guard NOT attached. Run SELECT licence_attach_guard(); after the sales schema exists.';
+        RAISE NOTICE 'no payment table found; hard-guard NOT attached. Run SELECT licence_attach_guard(''public.<payment_table>''); once the sales schema exists.';
     END IF;
 END$$;
 

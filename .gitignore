@@ -7,19 +7,37 @@
 !.gitignore
 !.gitattributes
 !README.md
+!CLAUDE.md
 !requirements.txt
 !.env.example
+!awesome_links_extracted.md
+!conftest.py
 
 # Previously-tracked ADB public key (harmless, kept for continuity):
 !.android/
 .android/*
 !.android/adbkey.pub
 
+# GitHub Actions workflows:
+!.github/
+!.github/**
+
+# Claude Code shared config only. The rest of .claude/ is personal state -
+# sessions, memory, per-developer settings.local.json - and must stay out.
+!.claude/
+.claude/*
+!.claude/settings.json
+!.claude/launch.json
+!.claude/hooks/
+!.claude/hooks/**
+
 # Project source directories. Un-exclude each directory first - git will not
 # descend into an excluded directory, so the "!dir/" line has to precede
 # "!dir/**".
 !actions/
 !actions/**
+!agents/
+!agents/**
 !db/
 !db/**
 !docs/
@@ -28,8 +46,12 @@
 !managed-agents/**
 !scripts/
 !scripts/**
+!snowflake/
+!snowflake/**
 !tests/
 !tests/**
+!tools/
+!tools/**
 
 # ...but never the generated noise inside them. These come last so they win:
 # the last matching pattern decides.

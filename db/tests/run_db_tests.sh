@@ -2,7 +2,8 @@
 #
 # run_db_tests.sh — spin up a disposable PostgreSQL cluster and verify the
 # SAMePOS licensing core end-to-end:
-#   * migration (024_licensing.sql) applies to a DB with a sales_order stub;
+#   * migration (024_licensing.sql) applies to a DB with sales_order +
+#     sales_payment stubs (the guard attaches at the payment table);
 #   * standalone schema (licensing.schema.sql) applies to a bare DB;
 #   * behavioural assertions (behavior.sql) all pass;
 #   * migration and standalone produce the SAME licensing objects;
@@ -71,9 +72,9 @@ as "$PGBIN/pg_ctl" -D "$PGDATA" -l "$LOG" -w -t 30 \
 
 fail=0
 
-echo "== apply migration to 'licmig' (with sales_order stub present) =="
+echo "== apply migration to 'licmig' (with sales_order + sales_payment stubs) =="
 createdb_do licmig
-psql_do -d licmig -q -c "CREATE TABLE sales_order (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, business_day_id bigint, created_at timestamptz DEFAULT now());"
+psql_do -d licmig -q -c "CREATE TABLE sales_order (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, business_day_id bigint, created_at timestamptz DEFAULT now()); CREATE TABLE sales_payment (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, sales_order_id bigint, amount numeric(12,2), created_at timestamptz DEFAULT now());"
 psql_do -d licmig -q -f "$MIG"
 echo "   migration applied."
 
@@ -84,7 +85,7 @@ echo "   standalone applied."
 
 echo "== idempotency: apply migration twice to 'licidem' =="
 createdb_do licidem
-psql_do -d licidem -q -c "CREATE TABLE sales_order (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, business_day_id bigint);"
+psql_do -d licidem -q -c "CREATE TABLE sales_order (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, business_day_id bigint); CREATE TABLE sales_payment (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, sales_order_id bigint, amount numeric(12,2));"
 psql_do -d licidem -q -f "$MIG"
 psql_do -d licidem -q -f "$MIG"
 echo "   migration is idempotent (applied twice, no error)."
