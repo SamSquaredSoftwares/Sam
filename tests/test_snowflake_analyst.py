@@ -411,3 +411,106 @@ def test_main_explicit_package_skips_discovery(monkeypatch):
     monkeypatch.setattr(agent, "run_agent", capture)
     assert agent.main(["--quiet", "--package", "manual-pkg", "q"]) == 0
     assert seen["package"] == "manual-pkg"
+
+
+# --- runs that produce no answer -------------------------------------------
+# Each of these used to print an empty line and exit 0, which is
+# indistinguishable from a question that genuinely has no answer.
+
+
+def test_run_agent_flags_hitting_the_iteration_cap():
+    # The runner stops iterating and the generator just ends; from the outside
+    # that looks exactly like a finished run, so the turn count is what tells
+    # them apart.
+    turns = [
+        _Message(
+            [_Block(type="tool_use", name="run_sql", input={"sql": "select 1"})],
+            "tool_use",
+            _Usage(),
+        )
+    ] * 3
+    result = agent.run_agent("q", client=_StubClient(turns), max_iterations=3)
+
+    assert result.turns == 3
+    assert result.exhausted
+
+
+def test_a_completed_run_is_not_reported_as_exhausted():
+    result = agent.run_agent("q", client=_StubClient(_two_turn_run()), max_iterations=2)
+
+    assert result.turns == 2  # used every turn it was allowed
+    assert not result.exhausted  # but finished of its own accord
+
+
+def test_main_fails_when_the_iteration_cap_is_hit(monkeypatch, capsys):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setattr(agent, "discover_package", lambda *a, **k: "sam-actions")
+    monkeypatch.setattr(
+        agent,
+        "run_agent",
+        lambda *a, **k: agent.AgentResult(
+            answer="", stop_reason="tool_use", turns=20, max_iterations=20
+        ),
+    )
+
+    assert agent.main(["--quiet", "q"]) == 1
+    assert "Stopped after 20 model turns" in capsys.readouterr().err
+
+
+def test_main_fails_when_the_run_produces_no_answer(monkeypatch, capsys):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setattr(agent, "discover_package", lambda *a, **k: "sam-actions")
+    monkeypatch.setattr(
+        agent,
+        "run_agent",
+        lambda *a, **k: agent.AgentResult(answer="", stop_reason="end_turn"),
+    )
+
+    captured = agent.main(["--quiet", "q"])
+    assert captured == 1
+    assert "without producing an answer" in capsys.readouterr().err
+
+
+def test_tool_calls_on_a_terminal_turn_are_not_counted():
+    # A refused or truncated turn can still carry a half-formed tool_use block
+    # that the runner will never execute.
+    turns = [
+        _Message(
+            [
+                _Block(type="text", text="partial"),
+                _Block(type="tool_use", name="run_sql", input={"sql": "select 1"}),
+            ],
+            "max_tokens",
+            _Usage(),
+        )
+    ]
+    seen: list[str] = []
+    result = agent.run_agent(
+        "q", client=_StubClient(turns), on_tool_call=lambda name, _: seen.append(name)
+    )
+
+    assert result.tool_calls == []
+    assert seen == []
+
+
+# --- timeouts are not "the server is down" ---------------------------------
+
+
+def test_run_action_reports_a_timeout_as_a_slow_query(monkeypatch):
+    monkeypatch.setattr(agent.httpx, "post", _FakePost(httpx.ReadTimeout("timed out")))
+    result = agent.run_action("query-snowflake", {"sql": "select 1"}, timeout=120.0)
+
+    # httpx.ReadTimeout is an httpx.HTTPError, so without a dedicated branch
+    # this said the Action Server may not be running.
+    assert "timed out after 120s" in result
+    assert "still be running in Snowflake" in result
+    assert "may not be running" not in result
+
+
+def test_run_action_connection_error_message_has_no_hole_in_it(monkeypatch):
+    # str() on a bare connection error is often empty.
+    monkeypatch.setattr(agent.httpx, "post", _FakePost(httpx.ConnectError("")))
+    result = agent.run_action("query-snowflake", {"sql": "select 1"})
+
+    assert "ConnectError" in result
+    assert ": ." not in result

@@ -14,7 +14,7 @@ Usage:
 
     ./scripts/run_local.sh                     # start the tool layer first
     export ANTHROPIC_API_KEY=sk-ant-...
-    python -m agents.snowflake_analyst "Which 5 customers spent the most?"
+    .venv/bin/python -m agents.snowflake_analyst "Which 5 customers spent the most?"
 
 Point the agent at a non-default server with --server or SAM_ACTION_SERVER.
 """
@@ -26,11 +26,20 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 import anthropic
 import httpx
 from anthropic import beta_tool
+
+# tls_trust lives with the actions because that is where the Snowflake client
+# is, but this process has the same problem: httpx ignores REQUESTS_CA_BUNDLE
+# entirely, so on a network that re-terminates TLS a bundle configured as
+# SAM_CA_BUNDLE or REQUESTS_CA_BUNDLE would never reach the Anthropic SDK here.
+# The actions are served as flat modules, so this import is flat too.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "actions"))
+from tls_trust import CaBundleError, anthropic_http_client  # noqa: E402
 
 DEFAULT_ACTION_PACKAGE = "sam-actions"
 DEFAULT_ACTION_SERVER = "http://localhost:8080"
@@ -158,9 +167,21 @@ def run_action(
             json=payload,
             timeout=timeout,
         )
-    except httpx.HTTPError as exc:
+    except httpx.TimeoutException:
+        # Distinct from "unreachable": the server answered the connection and
+        # then took too long, which for query-snowflake means a slow query, not
+        # a missing server. httpx.TimeoutException subclasses HTTPError, so it
+        # has to be caught first.
         return (
-            f"Could not reach action {name!r} at {base_url}: {exc}. "
+            f"Action {name!r} timed out after {timeout:g}s. The query may still be "
+            "running in Snowflake; try narrowing it or lowering max_rows."
+        )
+    except httpx.HTTPError as exc:
+        # str() on a connection error is often empty, which would otherwise
+        # produce a sentence with a hole in it.
+        detail = str(exc) or type(exc).__name__
+        return (
+            f"Could not reach action {name!r} at {base_url}: {detail}. "
             "The Action Server may not be running (./scripts/run_local.sh)."
         )
 
@@ -255,6 +276,8 @@ class AgentResult:
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
+    turns: int = 0
+    max_iterations: int = DEFAULT_MAX_ITERATIONS
 
     @property
     def refused(self) -> bool:
@@ -265,6 +288,17 @@ class AgentResult:
     def truncated(self) -> bool:
         """Whether the answer was cut off by the output token limit."""
         return self.stop_reason == "max_tokens"
+
+    @property
+    def exhausted(self) -> bool:
+        """Whether the run hit the iteration cap mid-task.
+
+        The runner stops iterating and the generator simply ends, which looks
+        identical to a finished run from the outside. A completed run's last
+        turn stops for its own reasons ("end_turn"); a capped one was still
+        asking for tools when the loop was cut off.
+        """
+        return self.turns >= self.max_iterations and self.stop_reason == "tool_use"
 
 
 def run_agent(
@@ -308,7 +342,9 @@ def run_agent(
     Raises:
         anthropic.APIError: If the Messages API call fails.
     """
-    client = client or anthropic.Anthropic()
+    # A configured bundle replaces httpx's default trust store; when none is
+    # configured `http_client` is None and the SDK builds its own.
+    client = client or anthropic.Anthropic(http_client=anthropic_http_client())
 
     runner = client.beta.messages.tool_runner(
         model=model,
@@ -330,8 +366,9 @@ def run_agent(
         messages=[{"role": "user", "content": question}],
     )
 
-    result = AgentResult(answer="")
+    result = AgentResult(answer="", max_iterations=max_iterations)
     for message in runner:
+        result.turns += 1
         turn_text: list[str] = []
         for block in message.content:
             if block.type == "text":
@@ -340,9 +377,14 @@ def run_agent(
                     if on_text is not None:
                         on_text(block.text)
             elif block.type == "tool_use":
-                result.tool_calls.append(block.name)
-                if on_tool_call is not None:
-                    on_tool_call(block.name, dict(block.input or {}))
+                # A turn that stopped for any other reason -- refusal, the
+                # token limit -- may still carry a half-formed tool_use block
+                # that the runner will never execute. Reporting those would
+                # overstate what the run did.
+                if message.stop_reason == "tool_use":
+                    result.tool_calls.append(block.name)
+                    if on_tool_call is not None:
+                        on_tool_call(block.name, dict(block.input or {}))
 
         usage = message.usage
         result.input_tokens += usage.input_tokens or 0
@@ -436,6 +478,9 @@ def main(argv: list[str] | None = None) -> int:
             max_iterations=args.max_iterations,
             on_tool_call=None if args.quiet else report_tool_call,
         )
+    except CaBundleError as exc:
+        print(f"CA bundle is not usable: {exc}", file=sys.stderr)
+        return 1
     except anthropic.AuthenticationError:
         print("ANTHROPIC_API_KEY was rejected by the API.", file=sys.stderr)
         return 1
@@ -453,7 +498,27 @@ def main(argv: list[str] | None = None) -> int:
         print("The model declined to answer this request.", file=sys.stderr)
         return 1
 
-    print(result.answer)
+    if result.answer:
+        print(result.answer)
+
+    # Below here the run produced no usable answer. Each of these used to exit
+    # 0 having printed an empty line, which is indistinguishable from a
+    # question that genuinely has no answer.
+    if result.exhausted:
+        print(
+            f"\n[Stopped after {result.max_iterations} model turns with the agent "
+            "still calling tools. Raise --max-iterations, or ask something "
+            "narrower.]",
+            file=sys.stderr,
+        )
+        return 1
+    if not result.answer:
+        print(
+            f"\n[The agent finished without producing an answer "
+            f"(stop_reason={result.stop_reason}).]",
+            file=sys.stderr,
+        )
+        return 1
 
     if result.truncated:
         print(

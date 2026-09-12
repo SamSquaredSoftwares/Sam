@@ -36,6 +36,11 @@
       "Bash(python scripts/snowflake_readonly_role.py*)",
       "Bash(python3 scripts/snowflake_readonly_role.py*)",
       "Bash(.venv/bin/python scripts/snowflake_readonly_role.py*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./.datadir/**)"
     ]
   }
 }

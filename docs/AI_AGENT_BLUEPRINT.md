@@ -93,11 +93,19 @@ encodes the important rules — copy it when adding tools.
   this when the user asks about current data") measurably improve tool
   selection.
 - **Typed, described parameters** with sensible defaults (`max_rows: int = 100`).
-- **A security boundary enforced in code, not in the prompt.**
-  `query_snowflake` rejects anything that isn't a single
-  SELECT/SHOW/DESCRIBE/WITH/EXPLAIN statement and caps rows at 1000. The
-  prompt can *ask* Claude to be careful; the tool *guarantees* it. Never rely
-  on the model to enforce a boundary the code can enforce.
+- **Constraints in code, not in the prompt.** `query_snowflake` rejects
+  anything that isn't a single SELECT/SHOW/DESCRIBE/WITH/EXPLAIN statement and
+  caps rows at 1000. The prompt can *ask* Claude to be careful; the tool
+  refuses without asking. Never leave to the model what the code can settle.
+
+  But be honest with yourself about what that buys. An application-level SQL
+  check is a **guardrail, not a security boundary** — it stops the model from
+  wandering, not an attacker from trying, and any such filter can eventually be
+  worked around. The boundary has to sit where the data does. Here that is a
+  read-only Snowflake role holding `USAGE` and `SELECT` and nothing else
+  ([`snowflake/README.md`](../snowflake/README.md)), so the warehouse itself
+  refuses every write whatever SQL reaches it. Build the guardrail *and* the
+  boundary; describe them as the two different things they are.
 - **Secrets out of band.** Credentials arrive as Sema4.ai `Secret` params
   (via the `x-action-context` header) or environment variables — never in the
   request body, never in the conversation. A secret pasted into a prompt is
@@ -150,8 +158,11 @@ Prerequisites:
 
 This agent ships in the repo at
 **[`agents/snowflake_analyst.py`](../agents/snowflake_analyst.py)**, with tests
-in `tests/test_snowflake_analyst.py`. The `anthropic` package is already in
-`requirements.txt` and `httpx` ships with it, so there are no new dependencies.
+in `tests/test_snowflake_analyst.py`. Both `anthropic` and `httpx` are already
+in `requirements.txt` — declared separately, because from 1.0 the Anthropic SDK
+depends on `httpx2`, not `httpx`. An agent that imports plain `httpx` and
+assumes the SDK dragged it in will import fine on your machine and fail on a
+box where nothing else happens to pull it.
 
 The version below is trimmed for reading; see the file for the production
 details it leaves out (CLI flags, typed error handling, usage accounting, and
@@ -267,7 +278,7 @@ Run it:
 ```bash
 ./scripts/run_local.sh &                  # tool layer first
 export ANTHROPIC_API_KEY=sk-ant-...
-python -m agents.snowflake_analyst "Which 5 customers generated the most revenue last quarter?"
+.venv/bin/python -m agents.snowflake_analyst "Which 5 customers generated the most revenue last quarter?"
 ```
 
 What the tool runner does for you: it sends the request, executes your tool

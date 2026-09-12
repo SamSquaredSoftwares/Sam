@@ -23,12 +23,12 @@ venv_bin() {
 }
 
 # 0. Load credentials from .env if present (see .env.example).
+#    Read literally, not sourced -- see scripts/load_dotenv.sh for why.
+# shellcheck source=scripts/load_dotenv.sh
+. "$ROOT/scripts/load_dotenv.sh"
 if [ -f "$ROOT/.env" ]; then
     echo "Loading environment from $ROOT/.env"
-    set -a
-    # shellcheck disable=SC1091
-    . "$ROOT/.env"
-    set +a
+    load_dotenv "$ROOT/.env"
 fi
 
 # 1. Ensure the virtualenv exists and has the dependencies.
@@ -36,8 +36,13 @@ if [ ! -x "$(venv_bin)/python" ] && [ ! -x "$(venv_bin)/python.exe" ]; then
     echo "Creating virtualenv at $VENV ..."
     if command -v uv >/dev/null 2>&1; then
         uv venv --python 3.12 "$VENV"
-    else
+    elif command -v python3.12 >/dev/null 2>&1; then
         python3.12 -m venv "$VENV"
+    else
+        echo "error: need uv or python3.12 on PATH to build $VENV." >&2
+        echo "       Install uv (https://docs.astral.sh/uv/) or Python 3.12," >&2
+        echo "       or create .venv yourself -- see the Commands section of CLAUDE.md." >&2
+        exit 1
     fi
 fi
 BIN="$(venv_bin)"

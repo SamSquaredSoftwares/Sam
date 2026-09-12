@@ -26,14 +26,20 @@ db/tests/run_db_tests.sh
 python3 managed-agents/scripts/validate_agents.py
 
 # Read-only Snowflake role. Printing is the default because these are
-# privilege changes; --execute needs admin credentials, and the verifier
-# exits non-zero if writes are not actually refused (so it can gate a deploy).
-python scripts/snowflake_readonly_role.py --role SAM_READONLY --database ANALYTICS
-python scripts/snowflake_readonly_role.py --execute
-python scripts/verify_snowflake_readonly.py
+# privilege changes; --execute re-renders from the flags and environment it is
+# given, so it prints what it will run and asks before applying. Pass the same
+# flags to both, or the SQL you apply is not the SQL you reviewed. Both scripts
+# read .env (see scripts/dotenv_file.py) as well as the environment.
+.venv/bin/python scripts/snowflake_readonly_role.py \
+    --role SAM_READONLY --user SAM_SERVICE \
+    --warehouse COMPUTE_WH --database ANALYTICS
+.venv/bin/python scripts/snowflake_readonly_role.py \
+    --role SAM_READONLY --user SAM_SERVICE \
+    --warehouse COMPUTE_WH --database ANALYTICS --execute
+.venv/bin/python scripts/verify_snowflake_readonly.py
 
 # Run the example agent (server must be up; needs ANTHROPIC_API_KEY)
-python -m agents.snowflake_analyst "Which 5 customers spent the most?"
+.venv/bin/python -m agents.snowflake_analyst "Which 5 customers spent the most?"
 ```
 
 No linter or formatter is configured — there is no `pyproject.toml`, ruff, or
@@ -86,6 +92,9 @@ check. Do the same in any new agent rather than hardcoding.
 
 - `requirements.txt` — the local virtualenv used by `run_local.sh` and tests.
 - `actions/package.yaml` — the RCC-managed environment used in production.
+
+`tests/test_dependency_manifests.py` fails if a package pinned in both stops
+agreeing, which is the only automated thing standing between the two.
 
 `run_local.sh` stages the actions **without** `package.yaml` on purpose: that
 makes the server run in unmanaged mode, skipping the RCC bootstrap, which needs
@@ -144,9 +153,29 @@ and applied by `scripts/snowflake_readonly_role.py` and proven by
 actions at it. Don't present the guard as a security control when writing docs
 or PR descriptions; the role is the thing that makes the claim true.
 
-The verifier distinguishes a *privilege* error from a "table not found" error
-on its write probes — only the former proves the role is safe. A probe that
-fails for the wrong reason is not a pass.
+The verifier is what makes that claim checkable, and two of its properties are
+load-bearing. **A write probe has to target an object that exists**: Snowflake
+answers a write against a missing table with `does not exist or not
+authorized`, which is the same answer a role with full write access gets, so it
+proves nothing. The DML probes therefore run against a real table found through
+`INFORMATION_SCHEMA` (or `--probe-table`), written to touch zero rows inside a
+rolled-back transaction so they stay harmless either way. And **"not proven
+safe" is a failure**: only an explicit privilege refusal passes, so a probe that
+fails for any other reason exits non-zero rather than printing a warning.
+`tests/test_verify_snowflake_readonly.py` pins both against Snowflake's real
+error strings.
+
+An earlier version had neither property — its privilege markers included
+Snowflake's object-not-found text and every DML probe targeted a table that by
+design did not exist — so it reported "Safe to use as SNOWFLAKE_ROLE" for a role
+holding `INSERT`/`UPDATE`/`DELETE`. If you change the markers, keep the
+not-found test ahead of the privilege test: the not-found message ends in the
+words "not authorized".
+
+The verifier also reads `SHOW GRANTS TO ROLE`, and fails on any privilege
+outside `USAGE`/`SELECT`-and-friends or any inherited role. That covers what a
+`DROP` probe cannot: dropping a real table to see whether it is possible is not
+a test anyone can run twice.
 
 ### Test layout
 
@@ -174,6 +203,33 @@ no API key, no network, and no warehouse.
 
 None of the three substitutes for another, and a change in one does not
 propagate to the others.
+
+### `.env` is read literally, in two places that must agree
+
+`.env` holds a Snowflake password, which is arbitrary text. Nothing sources it
+as shell — `. .env` turns `Sn0w$Flake!2026` into `Sn0w!2026` and aborts
+outright on a value containing a space. Two readers implement the same small
+grammar, because `run_local.sh` needs `.env` before the virtualenv it would
+need to run Python exists:
+
+- `scripts/dotenv_file.py` — used by the two `scripts/*snowflake*` scripts.
+- `scripts/load_dotenv.sh` — sourced by `run_local.sh`.
+
+`tests/test_dotenv_file.py` runs both over the same fixtures and fails if they
+diverge. Values already in the environment win in both. Change one, change the
+other.
+
+### The Claude Code run config
+
+`.claude/settings.json` is committed and shared; `.claude/settings.local.json`
+is per-developer and gitignored. The `SessionStart` hook
+(`.claude/hooks/setup-venv.sh`) builds `.venv` on the first session in a fresh
+clone and is a no-op afterwards, so `.venv/bin/python -m pytest tests/ -q`
+works from the first prompt.
+
+`Read` is pre-approved, so the `deny` list is what keeps `.env` — a live
+Snowflake password and Anthropic key — out of a transcript. Anything else
+carrying real credentials belongs there too.
 
 ### `db/` — SAMePOS licensing core, not yet reconciled
 

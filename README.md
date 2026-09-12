@@ -98,7 +98,7 @@ Claude query the warehouse through the Snowflake actions:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-python -m agents.snowflake_analyst "Which 5 customers generated the most revenue last quarter?"
+.venv/bin/python -m agents.snowflake_analyst "Which 5 customers generated the most revenue last quarter?"
 ```
 
 It discovers the action package from the server's OpenAPI spec; use `--server`
@@ -172,12 +172,20 @@ application-level SQL check can be worked around. The durable protection is a
 read-only Snowflake role, so the warehouse itself refuses writes:
 
 ```bash
-python scripts/snowflake_readonly_role.py \
+# Review the SQL. Pass the same flags to the --execute run below: it
+# re-renders from what it is given, so dropping them applies different SQL.
+.venv/bin/python scripts/snowflake_readonly_role.py \
   --role SAM_READONLY --user SAM_SERVICE \
-  --warehouse COMPUTE_WH --database ANALYTICS   # review the SQL
-python scripts/snowflake_readonly_role.py --execute
+  --warehouse COMPUTE_WH --database ANALYTICS
+
+# Apply it, as an admin who can create roles and owns the objects. Prints the
+# statements and asks before running them.
+.venv/bin/python scripts/snowflake_readonly_role.py \
+  --role SAM_READONLY --user SAM_SERVICE \
+  --warehouse COMPUTE_WH --database ANALYTICS --execute
+
 echo 'SNOWFLAKE_ROLE=SAM_READONLY' >> .env
-python scripts/verify_snowflake_readonly.py     # prove writes are refused
+.venv/bin/python scripts/verify_snowflake_readonly.py   # prove writes are refused
 ```
 
 See [`snowflake/README.md`](snowflake/README.md) — in particular the caveats
