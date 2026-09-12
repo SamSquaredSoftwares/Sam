@@ -52,6 +52,8 @@ Both sides of each tension are real. Neither is dropped. Mr LSG decides.
 1. Cloud layer. The pack says Supabase is the cloud layer [pack]. The repo's deploy workflow ships an ASP.NET Core app called SAMePOS to Azure App Service [repo]. Is the Azure app legacy, a separate admin or vendor app, or part of the current stack? Record the answer as a new row.
 2. The node app. The repo's licensing core assumes a FastAPI app on the node calling `POST /api/licence/activate`, backed by an embedded PostgreSQL [repo]. The pack describes a Python sync engine of roughly 900 lines [pack]. Same service, or two services on the node? Also confirm the embedded PostgreSQL is the port-5433 instance the pack names.
 
+3. Billing stack and payment provider for SAMeSync self-serve purchase. The pack says billing is Stripe plus Prisma plus Supabase on Next.js App Router [pack]. Mr LSG separately asked for the SAMeSync storefront to be built "the same way we set up the Cothenticity platform end to end" and chose Paystack when asked - and Cothenticity runs on Cloudflare Pages Functions plus D1 with a reference-keyed `payments` table, a different stack and a different provider. Cothenticity is a different product, so mirroring it is a real choice rather than an error, but only one of the two can be the SAMeSync answer. See MONETIZATION.md open decision 5.
+
 ## How to add a decision
 
 1. One line per decision. Add it the day you make it, with the real date.
