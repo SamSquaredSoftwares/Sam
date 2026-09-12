@@ -13,6 +13,11 @@
 --
 -- THE ONE THING THAT MATTERS: THE CLOUD HAS NO POS TABLES YET.
 --
+-- Update, 12 Sep 2026: a designed-but-NOT-APPLIED answer now exists in
+-- the Sam repo at db/cloud/migrations/0001_pos_trading.sql (with
+-- rollback and tests; see db/cloud/README.md). This file still shows
+-- the LIVE schema; re-dump it after that migration is applied.
+--
 -- The public schema below is a company registry only: company identity,
 -- contacts, directors, stores. There are NO sales, products, terminals,
 -- payments, or sync tables in the cloud. The (terminal_id, sale_ref)
