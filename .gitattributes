@@ -1,2 +1,13 @@
-# Shell scripts must keep LF endings: a CRLF shebang breaks execution on Linux/CI.
-*.sh text eol=lf
+# Force text handling. README.md and requirements.txt were committed as
+# UTF-16LE, which made git treat them as binary - no diffs, no line merges -
+# and broke "pip install -r requirements.txt". These rules keep them text.
+* text=auto eol=lf
+
+*.md    text
+*.txt   text
+*.py    text
+*.yaml  text
+*.yml   text
+
+# Shell scripts must be LF: a CRLF shebang line fails as "bad interpreter".
+*.sh    text eol=lf
