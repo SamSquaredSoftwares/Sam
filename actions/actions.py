@@ -2,6 +2,10 @@
 
 Every function decorated with `@action` is discovered by the Action Server and
 exposed both as an OpenAPI endpoint and as an MCP tool.
+
+Outbound HTTPS honours a custom CA bundle via `SAM_CA_BUNDLE`,
+`REQUESTS_CA_BUNDLE` or `SSL_CERT_FILE` - see `tls_trust` for why that is
+needed behind a TLS-inspecting proxy.
 """
 
 import os
@@ -9,6 +13,8 @@ import platform
 import sys
 
 from sema4ai.actions import ActionError, Secret, action
+
+from tls_trust import CaBundleError, anthropic_http_client, describe_trust
 
 DEFAULT_MODEL = "claude-sonnet-5"
 
@@ -35,7 +41,8 @@ def health_check() -> str:
         f"python={platform.python_version()} "
         f"executable={sys.executable} "
         f"platform={platform.platform()} "
-        f"sema4ai-actions={actions_version}"
+        f"sema4ai-actions={actions_version} "
+        f"{describe_trust()}"
     )
 
 
@@ -62,7 +69,14 @@ def ask_claude(prompt: str, api_key: Secret, model: str = DEFAULT_MODEL) -> str:
 
     import anthropic
 
-    client = anthropic.Anthropic(api_key=key)
+    # A configured bundle replaces httpx's default trust store. When none is
+    # configured `http_client` is None and the SDK builds its own client.
+    try:
+        http_client = anthropic_http_client()
+    except CaBundleError as e:
+        raise ActionError(str(e))
+
+    client = anthropic.Anthropic(api_key=key, http_client=http_client)
     try:
         message = client.messages.create(
             model=model,

@@ -1,8 +1,20 @@
 {
-  "autoCompactEnabled": true,
-  "precomputeCompactionEnabled": true,
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "SAM_TESTS_REQUIRE_TLS": "1"
+  },
   "hooks": {
     "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/setup-venv.sh",
+            "timeout": 600,
+            "statusMessage": "Preparing .venv so tests can run"
+          }
+        ]
+      },
       {
         "matcher": "startup",
         "hooks": [
@@ -15,5 +27,28 @@
         ]
       }
     ]
-  }
+  },
+  "permissions": {
+    "allow": [
+      "Read",
+      "Bash(.venv/bin/python -m pytest*)",
+      "Bash(python3 managed-agents/scripts/validate_agents.py*)",
+      "Bash(db/tests/run_db_tests.sh*)",
+      "Bash(uv venv*)",
+      "Bash(uv pip install*)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(git fetch*)",
+      "Bash(git branch*)"
+    ],
+    "ask": [
+      "Bash(python scripts/snowflake_readonly_role.py*)",
+      "Bash(python3 scripts/snowflake_readonly_role.py*)",
+      "Bash(.venv/bin/python scripts/snowflake_readonly_role.py*)"
+    ]
+  },
+  "autoCompactEnabled": true,
+  "precomputeCompactionEnabled": true
 }
