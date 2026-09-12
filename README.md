@@ -19,6 +19,7 @@ docs/
   samepos-project/  The SAMePOS Claude Project setup pack (instructions + knowledge files)
 snowflake/          Read-only role DDL for the Snowflake actions
 db/                 Licensing schema, migrations, and SQL behavior tests
+  cloud/            SAMePOS cloud POS trading schema (Supabase migration + tests)
 managed-agents/     Claude Code managed subagents + cross-platform installer
 tests/              Python test suite
 requirements.txt    Dependencies for the local virtualenv
@@ -43,6 +44,9 @@ requirements.txt    Dependencies for the local virtualenv
   decide whether it actually protects you.
 - [`db/README.md`](db/README.md) — licensing schema, migrations, and how to run
   the database tests.
+- [`db/cloud/README.md`](db/cloud/README.md) — the SAMePOS cloud POS trading
+  schema for Supabase: the migration, its rollback, the design decisions, and
+  the disposable-cluster tests that verify it.
 
 ## Actions
 
