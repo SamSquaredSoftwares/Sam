@@ -1,0 +1,55 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    strategy:
+      # Run every version even after one fails - knowing whether a break is
+      # version-specific is the point of the matrix.
+      fail-fast: false
+      matrix:
+        # scripts/check_domain_health.py documents Python 3.9+ support, so the
+        # matrix holds that claim honest rather than trusting it.
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    name: unittest (Python ${{ matrix.python-version }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install test dependencies
+        # Only `cryptography`, which mints the throwaway certificates the TLS
+        # tests need. Installing the full requirements.txt would drag in the
+        # Action Server and the Snowflake connector - irrelevant to these tests,
+        # and they constrain the Python versions this matrix exists to cover.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install cryptography
+
+      - name: Verify cryptography is importable
+        # The certificate tests skip themselves when cryptography is unusable, so
+        # without this guard a broken install would show up as a green run that
+        # tested none of the TLS behaviour. That silent-false-pass shape is the
+        # same class of bug this PR exists to catch, so it is worth failing on.
+        run: python -c "import cryptography; print(cryptography.__version__)"
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Smoke-test the health check CLI
+        # Argument wiring only. Never point this at the live domain from CI: it
+        # would depend on a third party's DNS and TLS, and a runner behind TLS
+        # inspection would report the interceptor's certificate anyway.
+        run: python scripts/check_domain_health.py --help
