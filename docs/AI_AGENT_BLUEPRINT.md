@@ -93,11 +93,19 @@ encodes the important rules — copy it when adding tools.
   this when the user asks about current data") measurably improve tool
   selection.
 - **Typed, described parameters** with sensible defaults (`max_rows: int = 100`).
-- **A security boundary enforced in code, not in the prompt.**
-  `query_snowflake` rejects anything that isn't a single
-  SELECT/SHOW/DESCRIBE/WITH/EXPLAIN statement and caps rows at 1000. The
-  prompt can *ask* Claude to be careful; the tool *guarantees* it. Never rely
-  on the model to enforce a boundary the code can enforce.
+- **Constraints in code, not in the prompt.** `query_snowflake` rejects
+  anything that isn't a single SELECT/SHOW/DESCRIBE/WITH/EXPLAIN statement and
+  caps rows at 1000. The prompt can *ask* Claude to be careful; the tool
+  refuses without asking. Never leave to the model what the code can settle.
+
+  But be honest with yourself about what that buys. An application-level SQL
+  check is a **guardrail, not a security boundary** — it stops the model from
+  wandering, not an attacker from trying, and any such filter can eventually be
+  worked around. The boundary has to sit where the data does. Here that is a
+  read-only Snowflake role holding `USAGE` and `SELECT` and nothing else
+  ([`snowflake/README.md`](../snowflake/README.md)), so the warehouse itself
+  refuses every write whatever SQL reaches it. Build the guardrail *and* the
+  boundary; describe them as the two different things they are.
 - **Secrets out of band.** Credentials arrive as Sema4.ai `Secret` params
   (via the `x-action-context` header) or environment variables — never in the
   request body, never in the conversation. A secret pasted into a prompt is
@@ -148,8 +156,19 @@ Prerequisites:
 # ANTHROPIC_API_KEY must be set in the agent's environment
 ```
 
-Save as `agents/snowflake_analyst.py` (the `anthropic` package is already in
-`requirements.txt`, and `httpx` ships with it — no new dependencies):
+This agent ships in the repo at
+**[`agents/snowflake_analyst.py`](../agents/snowflake_analyst.py)**, with tests
+in `tests/test_snowflake_analyst.py`. Both `anthropic` and `httpx` are already
+in `requirements.txt` — declared separately, because from 1.0 the Anthropic SDK
+depends on `httpx2`, not `httpx`. An agent that imports plain `httpx` and
+assumes the SDK dragged it in will import fine on your machine and fail on a
+box where nothing else happens to pull it.
+
+The version below is trimmed for reading; see the file for the production
+details it leaves out (CLI flags, typed error handling, usage accounting, and
+discovering the action package name rather than hardcoding it — the Action
+Server derives that route segment from the directory it serves, so
+`sam-actions` is right for `run_local.sh` but not universally).
 
 ```python
 """A Snowflake analyst agent built on the Sam Action Server.
@@ -257,7 +276,9 @@ if __name__ == "__main__":
 Run it:
 
 ```bash
-python agents/snowflake_analyst.py "Which 5 customers generated the most revenue last quarter?"
+./scripts/run_local.sh &                  # tool layer first
+export ANTHROPIC_API_KEY=sk-ant-...
+.venv/bin/python -m agents.snowflake_analyst "Which 5 customers generated the most revenue last quarter?"
 ```
 
 What the tool runner does for you: it sends the request, executes your tool
@@ -486,6 +507,7 @@ over-triggering on current models.
 | `actions/package.yaml` | Tool-layer dependencies for the managed (RCC) environment |
 | `scripts/run_local.sh` | Starts the tool layer locally (OpenAPI + MCP on :8080) |
 | `.env` | Local credentials for the tool layer (gitignored) |
-| `agents/` (this blueprint's Step 3) | The brain: loop, system prompt, tool wrappers |
-| `http://localhost:8080/openapi.json` | Tool schemas, HTTP flavor |
+| `agents/snowflake_analyst.py` | The brain: loop, system prompt, tool wrappers |
+| `tests/test_snowflake_analyst.py` | Its tests — no API key or warehouse needed |
+| `http://localhost:8080/openapi.json` | Tool schemas, HTTP flavor (and the action package name) |
 | `http://localhost:8080/mcp` | Tool schemas, MCP flavor — for MCP-native hosts |
