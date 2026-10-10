@@ -14,18 +14,8 @@ agents/
   snowflake_analyst.py  Claude agent that answers questions via the actions
 scripts/
   run_local.sh      Start the Action Server in unmanaged mode (no RCC needed)
-  check_domain_health.py
-                    Assert the website's apex and www hostnames serve valid HTTPS
-tests/              Unit tests (stdlib `unittest`)
-docs/               Blueprint and operational runbooks
-docs/
-  AI_AGENT_BLUEPRINT.md  How to build an AI agent on top of these actions
-  samepos-project/  The SAMePOS Claude Project setup pack (instructions + knowledge files)
-snowflake/          Read-only role DDL for the Snowflake actions
-db/                 Licensing schema, migrations, and SQL behavior tests
-  cloud/            SAMePOS cloud POS trading schema (Supabase migration + tests)
-managed-agents/     Claude Code managed subagents + cross-platform installer
-tests/              Python test suite
+infra/
+  terraform/        GCP network baseline (IAP-only SSH firewall rule)
 requirements.txt    Dependencies for the local virtualenv
 ```
 
@@ -267,36 +257,16 @@ cd actions
 action-server start   # bootstraps the RCC-managed environment automatically
 ```
 
-## Domain health check
+## Infrastructure
 
-`scripts/check_domain_health.py` verifies that both the apex and `www` hostnames
-of the website serve valid HTTPS. It exists because of the 17 Aug 2026
-`NET::ERR_CERT_COMMON_NAME_INVALID` incident on `www.samsquaredsoftwares.com`,
-which was completely invisible from the apex — see
-[`docs/DOMAIN_TLS_RUNBOOK.md`](docs/DOMAIN_TLS_RUNBOOK.md) for the diagnosis and
-the Cloudflare-side fix.
+`infra/terraform/` manages the GCP network baseline for `samepos-vpc` in
+`sam-squared-samepos-prod` — currently the IAP-only SSH ingress rule
+(`samepos-allow-iap-ssh`: `tcp:22` from Google's `35.235.240.0/20` IAP
+TCP-forwarding range only).
 
-It checks DNS (flagging answers that reach the origin instead of the CDN edge),
-certificate chain validity and hostname coverage with browser wildcard rules,
-days to expiry, the redirect chain, and the HSTS header.
-
-```bash
-./scripts/check_domain_health.py
-./scripts/check_domain_health.py --apex example.com --warn-days 30
-./scripts/check_domain_health.py --json          # machine-readable
-```
-
-Stdlib only — no install step, runs on any Python 3.9+. Exit codes suit a
-monitor: `0` healthy, `1` warnings, `2` failure.
-
-When running anywhere that might inspect TLS (corporate proxy, sandboxed CI),
-always pin the expected issuer. Otherwise an interceptor's certificate — valid,
-and signed by a CA the machine trusts — makes every check pass while telling you
-nothing about the real origin:
-
-```bash
-./scripts/check_domain_health.py --expect-issuer "Google Trust Services"
-```
+The rule pre-exists in the project, so it must be imported before the first
+apply. See [infra/terraform/README.md](infra/terraform/README.md) for the
+two-step import-then-harden rollout.
 
 ## Development
 

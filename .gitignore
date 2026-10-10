@@ -1,80 +1,33 @@
-# Deny by default. This repo is rooted at the Windows user profile, so any
-# unlisted file - credentials, tokens, kube/docker/cloud config - stays out
-# of git. Add an explicit "!" line to track something new.
-*
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
 
-# Explicitly tracked:
-!.gitignore
-!.gitattributes
-!README.md
-!CLAUDE.md
-!requirements.txt
-!.env.example
-!awesome_links_extracted.md
-!conftest.py
+# Secrets
+.env
 
-# Previously-tracked ADB public key (harmless, kept for continuity):
-!.android/
-.android/*
-!.android/adbkey.pub
+# Action Server
+.datadir/
+devdata/
+output/
+.devrun/
+*.zip
 
-# GitHub Actions workflows:
-!.github/
-!.github/**
-
-# Claude Code shared config only. The rest of .claude/ is personal state -
-# sessions, memory, per-developer settings.local.json - and must stay out.
-!.claude/
-.claude/*
-!.claude/settings.json
-!.claude/launch.json
-!.claude/hooks/
-!.claude/hooks/**
-
-# Project source directories. Un-exclude each directory first - git will not
-# descend into an excluded directory, so the "!dir/" line has to precede
-# "!dir/**".
-!actions/
-!actions/**
-!agents/
-!agents/**
-!db/
-!db/**
-!docs/
-!docs/**
-!managed-agents/
-!managed-agents/**
-!scripts/
-!scripts/**
-!snowflake/
-!snowflake/**
-!tests/
-!tests/**
-!tools/
-!tools/**
-
-# ...but never the generated noise inside them. These come last so they win:
-# the last matching pattern decides.
-**/__pycache__/
-**/*.py[cod]
-**/.pytest_cache/
-**/.mypy_cache/
-**/.ruff_cache/
-**/*.egg-info/
-**/.venv/
-**/venv/
-**/node_modules/
-
-# Secrets stay out even inside allowlisted directories (.env.example above is
-# the only exception):
-**/.env
-
-# Action Server working directories:
-**/.datadir/
-**/devdata/
-**/output/
-**/.devrun/
-**/*.zip
-
-# OS / editor:
-**/.DS_Store
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
