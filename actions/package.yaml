@@ -10,8 +10,12 @@ dependencies:
     - python=3.12.8
     - uv=0.4.30
   pypi:
+    # Kept in step with requirements.txt -- tests/test_dependency_manifests.py
+    # fails if a pin here stops satisfying the range declared there. The SDK
+    # must be 1.x: actions/tls_trust.py builds the Anthropic client on the
+    # SDK's httpx2 boundary, which only exists from 1.0.
     - sema4ai-actions=1.6.6
-    - anthropic=0.121.0
+    - anthropic=1.0.0
     - snowflake-connector-python=4.7.2
 
 packaging:
