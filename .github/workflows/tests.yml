@@ -46,7 +46,18 @@ jobs:
         run: python -c "import cryptography; print(cryptography.__version__)"
 
       - name: Run tests
-        run: python -m unittest discover -s tests -v
+        # Only the unittest suites this matrix exists for: the domain health
+        # check (its 3.9+ claim) and the TLS trust tests (they need cryptography).
+        # Everything else in tests/ needs the full requirements.txt, which this
+        # job deliberately does not install: the eight pytest suites import
+        # pytest at module level, and test_actions_trust.py skips all six of its
+        # tests without the Action Server stack - a green run that tested
+        # nothing, the shape the guard step above exists to catch. They all run
+        # in ci.yml on 3.12 and 3.13. A bare `discover -s tests` imported the
+        # pytest suites too, so this job failed on every run since it landed.
+        run: |
+          python -m unittest discover -s tests -p 'test_check_domain_health*.py' -v
+          python -m unittest discover -s tests -p 'test_tls_trust*.py' -v
 
       - name: Smoke-test the health check CLI
         # Argument wiring only. Never point this at the live domain from CI: it
