@@ -40,9 +40,9 @@ Design decisions taken from that:
 | One-off purchase grants a configurable bundle (default 500 credits) | [pack] |
 | Top-ups sold at a configurable cents-per-credit (default 50c) | [pack] |
 | **Prepaid, not invoiced.** | Paid before the work is delivered: no debtor book, no chasing a venue for R160, and "balance empty" enforces itself where "unpaid invoice" does not. [draft] |
-| **Overdraft, not a hard stop.** Balance may go negative to a configurable floor (default 200 credits); warn from 20% remaining; refuse only past the floor, with an actionable status. | A venue must never have its books silently stop mid-run. Mirrors the licensing rule that a lapsed licence never disrupts a live trading session. [repo] |
+| **Overdraft, not a hard stop.** Balance may go negative to a floor of 200 credits; warn from 100 credits; refuse only at the floor, with an actionable message, and auto-resume on top-up. | A venue must never have its books silently stop mid-run. Mirrors the licensing rule that a lapsed licence never disrupts a live trading session. [repo] |
 | The credit ledger is **append-only and hash-chained**; the balance is derived from it, never a mutable counter. | A counter drifts and cannot be audited. Same rule as the licensing audit trail. [repo] |
-| Credit expiry is modelled (`expires_at` on a grant) but defaults to none | Credits that never expire sit as deferred revenue forever; 24 months is the usual compromise. **Undecided.** [draft] |
+| Credit expiry: every grant is a lot with `expires_at` = grant + 24 months; consumption draws lots down oldest-expiry first. | Credits that never expire sit as deferred revenue forever. Decided 2026-10-18. [pack] |
 
 ### The unit problem - read this before pricing anything
 
@@ -88,26 +88,32 @@ billing side must honour:
 - the once-off fee is confirmed vendor-side at key issuance, where the customer
   cannot edit the record.
 
-## The client metering module (built, tested, stack-independent)
+## The client meter that actually exists (corrected 2026-10-18)
 
-`samesync/billing/` - Python, stdlib only, 29 passing tests. It prices and
-records billable work locally and reports it upstream:
+An earlier version of this section described a hash-chained `samesync/billing/`
+module with a `POST /api/usage` contract as "built, 29 tests, deployed". **That
+module does not exist in the samesync repository** (no file, branch, commit or
+stash); it was lost with the container that built it. What the shipped client
+really has, verified in the repo on 2026-10-18:
 
-- **delta-based per period**: re-running an unchanged business day charges
-  nothing; a day that grew by 40 late captures charges 40, not the whole day
-  again. Reconciliation re-runs are normal, so this is essential.
-- **idempotent on `batch_ref`**, arbitrated by a unique index rather than a
-  read-then-write, so concurrent replays cannot both insert.
-- **rate snapshotted** onto each entry, and the amount is a generated column, so
-  a later price change never rewrites history.
-- **hash-chained ledger** with tamper detection; metering refuses to append to a
-  ledger that fails verification.
-- reports to `POST {control_url}/api/usage` with `{install_code, ledger_from,
-  ledger_to, entries[]}`, **at-least-once**: any 2xx acknowledges up to
-  `ledger_to` and those entries are never re-sent, a 5xx re-sends safely.
-  The server must de-duplicate on the client entry `hash`.
+- `samesync/metering.py`: a plain-JSON per-day ledger (`usage_ledger.json`)
+  keyed `venue|YYYY-MM-DD`, storing the per-day **maximum** so a re-run never
+  inflates a day, with an `acked` high-water mark. Unbalanced days are never
+  billed.
+- Transport is the existing heartbeat: `POST {control_url}/api/checkin` carries
+  `usage: [{day, venue, receipts}]` and the server answers `usage_ack`
+  (`{day_key: receipts}`). There is no `/api/usage` endpoint anywhere.
+- The deployed unit is **POS receipts** on balanced days, billed by the Python
+  control plane at `cp.sam-squared.com` at a per-install cents price against a
+  mutable money balance. That is the model being replaced.
 
-Anything server-side must adapt to this contract; the client is deployed.
+The billing platform (samesync repo, `billing/`, see its `ARCHITECTURE.md`)
+keeps that wire contract byte-compatible and extends it: entries gain `lines`
+(QuickBooks import lines actually emitted), the install authenticates with a
+per-install token issued at pairing, the server bills the **delta of lines per
+venue-day** as credits and acknowledges with `usage_ack` plus `usage_ack_v2`.
+An acknowledgement means durably stored; anything that cannot be billed lands
+in a quarantine table and is never acknowledged. [repo]
 
 ## Decisions taken 2026-10-18
 
