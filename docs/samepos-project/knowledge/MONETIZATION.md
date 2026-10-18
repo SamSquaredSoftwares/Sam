@@ -109,22 +109,26 @@ records billable work locally and reports it upstream:
 
 Anything server-side must adapt to this contract; the client is deployed.
 
-## Open decisions
+## Decisions taken 2026-10-18
 
-1. **"250 per upload" - 250 cents (R2.50) or R250?** A 100x difference. Encoded
-   as 250 cents so far, because the AI invoice scan was separately set at R2.50
-   per document.
-2. **Voice uploads** - "images and voices into QuickBooks". Is voice a real
-   planned feature? Audio transcription prices differently from page scans and
-   needs its own credit cost.
-3. **The one-off software fee amount.** Never set. Every implementation so far
-   renders it from a single named constant marked owner-unconfirmed.
-4. **Credit expiry** - none, or 24 months?
-5. **Payment provider.** [pack] says Stripe (with Prisma + Supabase on Next.js
-   App Router). Mr LSG separately chose Paystack for a Cloudflare-hosted
-   storefront that mirrored the Cothenticity platform. These conflict - see
-   tension 3 in DECISIONS.md.
-6. **Per-document vs per-page AI scan pricing.** Per document is simpler and is
-   what was chosen; a 40-page consolidated supplier statement then costs the
-   same as a one-page delivery note while costing more to scan. Page counts are
-   recorded either way, so the mix can be watched before switching.
+Confirmed by Mr LSG in chat on 2026-10-18. Each is also a row in DECISIONS.md.
+
+| Decision | Value |
+|---|---|
+| Billing stack | **Stripe + Prisma + Supabase on Next.js App Router** - the pack's documented architecture. Resolves DECISIONS.md tension 3; the Cothenticity-style Cloudflare Pages/D1 + Paystack mirror is dropped for SAMeSync. |
+| Credit unit | 1 credit = **one QuickBooks import line**. The client pipeline reports `qbo_line`; `pos_row` stays recorded at zero cost for analytics. |
+| AI upload | **R2.50 per upload (250 cents) = 5 credits** at 50c/credit, per document regardless of length. |
+| Once-off software fee | **R5 000 incl. VAT**, includes the 500-credit bundle. Stored split: net 434 783c + VAT 65 217c = 500 000c. |
+| Top-ups | 50c per credit, VAT inclusive, split stored on every row. |
+| Credit expiry | **24 months** from grant; warn from 60 days before expiry. |
+| Payment provider | Stripe. Webhook handler idempotent on the Stripe event id (pack rule). |
+
+## Still open
+
+1. **Voice uploads** - "images and voices into QuickBooks". Not confirmed as a
+   planned feature; if it is, it needs its own credit cost (audio transcription
+   prices differently from page scans).
+2. **Per-document vs per-page AI scan pricing.** Per document is chosen; a
+   40-page consolidated supplier statement costs the same as a one-page delivery
+   note while costing more to scan. Page counts are recorded either way, so the
+   mix can be watched before switching.
