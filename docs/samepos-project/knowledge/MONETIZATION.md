@@ -110,10 +110,14 @@ really has, verified in the repo on 2026-10-18:
 The billing platform (samesync repo, `billing/`, see its `ARCHITECTURE.md`)
 keeps that wire contract byte-compatible and extends it: entries gain `lines`
 (QuickBooks import lines actually emitted), the install authenticates with a
-per-install token issued at pairing, the server bills the **delta of lines per
-venue-day** as credits and acknowledges with `usage_ack` plus `usage_ack_v2`.
-An acknowledgement means durably stored; anything that cannot be billed lands
-in a quarantine table and is never acknowledged. [repo]
+per-install token issued at pairing, the server bills the **growth of lines per
+customer and venue-day** as credits (on every day the build writes, reconciled
+or not; a second install or a renamed venue never bills a day twice) and
+acknowledges with `usage_ack` plus `usage_ack_v2`. An acknowledgement means
+durably stored; anything that cannot be billed lands in a quarantine table and
+is never acknowledged, and a malformed entry is echoed as `usage_rejected` so
+the client stops re-sending it. A day the legacy control plane acknowledged was
+paid there per receipt and is never billed again on the platform. [repo]
 
 ## Decisions taken 2026-10-18
 
