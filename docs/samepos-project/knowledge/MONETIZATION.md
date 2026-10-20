@@ -131,7 +131,7 @@ Confirmed by Mr LSG in chat on 2026-10-18. Each is also a row in DECISIONS.md.
 | Once-off software fee | **R5 000 incl. VAT**, includes the 500-credit bundle. Stored split: net 434 783c + VAT 65 217c = 500 000c. |
 | Top-ups | 50c per credit, VAT inclusive, split stored on every row. |
 | Credit expiry | **24 months** from grant; warn from 60 days before expiry. |
-| Payment provider | Stripe. Webhook handler idempotent on the Stripe event id (pack rule). |
+| Payment provider | ~~Stripe. Webhook handler idempotent on the Stripe event id (pack rule).~~ **Reopened 2026-10-20:** Stripe does not onboard a South African company, so the platform takes payment through Paystack or Stripe (`PAYMENT_PROVIDER`), each webhook idempotent - a Paystack transaction is keyed on its transaction id whichever way it arrives. Paystack is proposed; the choice is DECISIONS.md tension 5. |
 
 ## Still open
 
@@ -142,3 +142,6 @@ Confirmed by Mr LSG in chat on 2026-10-18. Each is also a row in DECISIONS.md.
    40-page consolidated supplier statement costs the same as a one-page delivery
    note while costing more to scan. Page counts are recorded either way, so the
    mix can be watched before switching.
+3. **Payment provider for production** - Paystack (proposed) or Stripe through
+   an entity Stripe onboards; and whether SAMeSync gets its own Paystack
+   business (one webhook URL each). DECISIONS.md tension 5.
