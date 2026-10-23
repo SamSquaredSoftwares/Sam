@@ -153,3 +153,10 @@ Confirmed by Mr LSG in chat on 2026-10-18. Each is also a row in DECISIONS.md.
    `docs/billing-go-live.md` step 4, which also has the branded templates);
    the provider and the address (for example no-reply@sam-squared.com) are
    Mr LSG's to pick. [repo]
+5. **The privacy notice** - a go-live gate. The draft, checked against what the
+   platform stores, is samgarib-debug/samesync
+   `docs/billing-privacy-notice-draft.md`. Sam Squared's attorney settles its
+   questions first: the Ireland and United States (Anthropic) transfers and the
+   providers' data processing agreements, retention against the append-only
+   money records, the Information Officer, and whether buyer details must be
+   required on tax invoices above the threshold. [repo]
