@@ -145,3 +145,11 @@ Confirmed by Mr LSG in chat on 2026-10-18. Each is also a row in DECISIONS.md.
 3. **The Supabase plan for the billing project** - the `sam2 pty ltd`
    organisation is on Free with both active slots used; go-live step 1 waits on
    Pro (or a second organisation).
+4. **The sending address for sign-in emails** - customers sign in by email
+   link, and Supabase's built-in mailer delivers only to the project's own team
+   ("Email address not authorized"), so no customer can sign in until the
+   billing project has custom SMTP (Resend, Postmark, Amazon SES, ...) with SPF
+   and DKIM on a Sam Squared domain. A go-live gate (samgarib-debug/samesync
+   `docs/billing-go-live.md` step 4, which also has the branded templates);
+   the provider and the address (for example no-reply@sam-squared.com) are
+   Mr LSG's to pick. [repo]
