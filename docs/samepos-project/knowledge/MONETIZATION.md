@@ -40,9 +40,9 @@ Design decisions taken from that:
 | One-off purchase grants a configurable bundle (default 500 credits) | [pack] |
 | Top-ups sold at a configurable cents-per-credit (default 50c) | [pack] |
 | **Prepaid, not invoiced.** | Paid before the work is delivered: no debtor book, no chasing a venue for R160, and "balance empty" enforces itself where "unpaid invoice" does not. [draft] |
-| **Overdraft, not a hard stop.** Balance may go negative to a configurable floor (default 200 credits); warn from 20% remaining; refuse only past the floor, with an actionable status. | A venue must never have its books silently stop mid-run. Mirrors the licensing rule that a lapsed licence never disrupts a live trading session. [repo] |
+| **Overdraft, not a hard stop.** Balance may go negative to a floor of 200 credits; warn from 100 credits; refuse only at the floor, with an actionable message, and auto-resume on top-up. | A venue must never have its books silently stop mid-run. Mirrors the licensing rule that a lapsed licence never disrupts a live trading session. [repo] |
 | The credit ledger is **append-only and hash-chained**; the balance is derived from it, never a mutable counter. | A counter drifts and cannot be audited. Same rule as the licensing audit trail. [repo] |
-| Credit expiry is modelled (`expires_at` on a grant) but defaults to none | Credits that never expire sit as deferred revenue forever; 24 months is the usual compromise. **Undecided.** [draft] |
+| Credit expiry: every grant is a lot with `expires_at` = grant + 24 months; consumption draws lots down oldest-expiry first. | Credits that never expire sit as deferred revenue forever. Decided 2026-10-18. [pack] |
 
 ### The unit problem - read this before pricing anything
 
@@ -88,43 +88,75 @@ billing side must honour:
 - the once-off fee is confirmed vendor-side at key issuance, where the customer
   cannot edit the record.
 
-## The client metering module (built, tested, stack-independent)
+## The client meter that actually exists (corrected 2026-10-18)
 
-`samesync/billing/` - Python, stdlib only, 29 passing tests. It prices and
-records billable work locally and reports it upstream:
+An earlier version of this section described a hash-chained `samesync/billing/`
+module with a `POST /api/usage` contract as "built, 29 tests, deployed". **That
+module does not exist in the samesync repository** (no file, branch, commit or
+stash); it was lost with the container that built it. What the shipped client
+really has, verified in the repo on 2026-10-18:
 
-- **delta-based per period**: re-running an unchanged business day charges
-  nothing; a day that grew by 40 late captures charges 40, not the whole day
-  again. Reconciliation re-runs are normal, so this is essential.
-- **idempotent on `batch_ref`**, arbitrated by a unique index rather than a
-  read-then-write, so concurrent replays cannot both insert.
-- **rate snapshotted** onto each entry, and the amount is a generated column, so
-  a later price change never rewrites history.
-- **hash-chained ledger** with tamper detection; metering refuses to append to a
-  ledger that fails verification.
-- reports to `POST {control_url}/api/usage` with `{install_code, ledger_from,
-  ledger_to, entries[]}`, **at-least-once**: any 2xx acknowledges up to
-  `ledger_to` and those entries are never re-sent, a 5xx re-sends safely.
-  The server must de-duplicate on the client entry `hash`.
+- `samesync/metering.py`: a plain-JSON per-day ledger (`usage_ledger.json`)
+  keyed `venue|YYYY-MM-DD`, storing the per-day **maximum** so a re-run never
+  inflates a day, with an `acked` high-water mark. Unbalanced days are never
+  billed.
+- Transport is the existing heartbeat: `POST {control_url}/api/checkin` carries
+  `usage: [{day, venue, receipts}]` and the server answers `usage_ack`
+  (`{day_key: receipts}`). There is no `/api/usage` endpoint anywhere.
+- The deployed unit is **POS receipts** on balanced days, billed by the Python
+  control plane at `cp.sam-squared.com` at a per-install cents price against a
+  mutable money balance. That is the model being replaced.
 
-Anything server-side must adapt to this contract; the client is deployed.
+The billing platform (samesync repo, `billing/`, see its `ARCHITECTURE.md`)
+keeps that wire contract byte-compatible and extends it: entries gain `lines`
+(QuickBooks import lines actually emitted), the install authenticates with a
+per-install token issued at pairing, the server bills the **growth of lines per
+customer and venue-day** as credits (on every day the build writes, reconciled
+or not; a second install or a renamed venue never bills a day twice) and
+acknowledges with `usage_ack` plus `usage_ack_v2`. An acknowledgement means
+durably stored; anything that cannot be billed lands in a quarantine table and
+is never acknowledged, and a malformed entry is echoed as `usage_rejected` so
+the client stops re-sending it. A day the legacy control plane acknowledged was
+paid there per receipt and is never billed again on the platform. [repo]
 
-## Open decisions
+## Decisions taken 2026-10-18
 
-1. **"250 per upload" - 250 cents (R2.50) or R250?** A 100x difference. Encoded
-   as 250 cents so far, because the AI invoice scan was separately set at R2.50
-   per document.
-2. **Voice uploads** - "images and voices into QuickBooks". Is voice a real
-   planned feature? Audio transcription prices differently from page scans and
-   needs its own credit cost.
-3. **The one-off software fee amount.** Never set. Every implementation so far
-   renders it from a single named constant marked owner-unconfirmed.
-4. **Credit expiry** - none, or 24 months?
-5. **Payment provider.** [pack] says Stripe (with Prisma + Supabase on Next.js
-   App Router). Mr LSG separately chose Paystack for a Cloudflare-hosted
-   storefront that mirrored the Cothenticity platform. These conflict - see
-   tension 3 in DECISIONS.md.
-6. **Per-document vs per-page AI scan pricing.** Per document is simpler and is
-   what was chosen; a 40-page consolidated supplier statement then costs the
-   same as a one-page delivery note while costing more to scan. Page counts are
-   recorded either way, so the mix can be watched before switching.
+Confirmed by Mr LSG in chat on 2026-10-18. Each is also a row in DECISIONS.md.
+
+| Decision | Value |
+|---|---|
+| Billing stack | **Stripe + Prisma + Supabase on Next.js App Router** - the pack's documented architecture. Resolves DECISIONS.md tension 3; the Cothenticity-style Cloudflare Pages/D1 + Paystack mirror is dropped for SAMeSync. |
+| Credit unit | 1 credit = **one QuickBooks import line**. The client pipeline reports `qbo_line`; `pos_row` stays recorded at zero cost for analytics. |
+| AI upload | **R2.50 per upload (250 cents) = 5 credits** at 50c/credit, per document regardless of length. |
+| Once-off software fee | **R5 000 incl. VAT**, includes the 500-credit bundle. Stored split: net 434 783c + VAT 65 217c = 500 000c. |
+| Top-ups | 50c per credit, VAT inclusive, split stored on every row. |
+| Credit expiry | **24 months** from grant; warn from 60 days before expiry. |
+| Payment provider | ~~Stripe. Webhook handler idempotent on the Stripe event id (pack rule).~~ **Reopened 2026-10-20:** Stripe does not onboard a South African company, so the platform takes payment through Paystack or Stripe (`PAYMENT_PROVIDER`), each webhook idempotent - a Paystack transaction is keyed on its transaction id whichever way it arrives. **Decided 2026-10-20: Paystack** (`PAYMENT_PROVIDER=paystack`) on SAMeSync's own Paystack business, on Vercel, with the database in eu-west-1 (DECISIONS.md rows of that date). |
+
+## Still open
+
+1. **Voice uploads** - "images and voices into QuickBooks". Not confirmed as a
+   planned feature; if it is, it needs its own credit cost (audio transcription
+   prices differently from page scans).
+2. **Per-document vs per-page AI scan pricing.** Per document is chosen; a
+   40-page consolidated supplier statement costs the same as a one-page delivery
+   note while costing more to scan. Page counts are recorded either way, so the
+   mix can be watched before switching.
+3. **The Supabase plan for the billing project** - the `sam2 pty ltd`
+   organisation is on Free with both active slots used; go-live step 1 waits on
+   Pro (or a second organisation).
+4. **The sending address for sign-in emails** - customers sign in by email
+   link, and Supabase's built-in mailer delivers only to the project's own team
+   ("Email address not authorized"), so no customer can sign in until the
+   billing project has custom SMTP (Resend, Postmark, Amazon SES, ...) with SPF
+   and DKIM on a Sam Squared domain. A go-live gate (samgarib-debug/samesync
+   `docs/billing-go-live.md` step 4, which also has the branded templates);
+   the provider and the address (for example no-reply@sam-squared.com) are
+   Mr LSG's to pick. [repo]
+5. **The privacy notice** - a go-live gate. The draft, checked against what the
+   platform stores, is samgarib-debug/samesync
+   `docs/billing-privacy-notice-draft.md`. Sam Squared's attorney settles its
+   questions first: the Ireland and United States (Anthropic) transfers and the
+   providers' data processing agreements, retention against the append-only
+   money records, the Information Officer, and whether buyer details must be
+   required on tax invoices above the threshold. [repo]
